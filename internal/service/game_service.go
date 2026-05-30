@@ -1,0 +1,139 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"namelesswatch/internal/appconf"
+	"namelesswatch/internal/roleplay"
+	"sync"
+)
+
+type GameService struct {
+	ctx      context.Context
+	mu       sync.Mutex
+	config   appconf.AppConfig
+	packs    map[string]roleplay.StoryPack
+	sessions map[string]*roleplay.GameSession
+}
+
+func NewGameService(config *appconf.AppConfig) *GameService {
+	initialConfig := appconf.AppConfig{}
+	if config != nil {
+		initialConfig = *config
+	}
+	return &GameService{
+		config:   initialConfig,
+		packs:    make(map[string]roleplay.StoryPack),
+		sessions: make(map[string]*roleplay.GameSession),
+	}
+}
+
+func (s *GameService) Init(ctx context.Context) {
+	s.ctx = ctx
+}
+
+func (s *GameService) SetConfig(config appconf.AppConfig) {
+	appconf.Normalize(&config)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config = config
+}
+
+func (s *GameService) RegisterGamePack(gameID string, files map[string]string) error {
+	if gameID == "" {
+		return errors.New("game id is required")
+	}
+
+	pack, err := roleplay.NewStoryPack(gameID, files)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.packs[gameID] = pack
+	return nil
+}
+
+func (s *GameService) StartGame(gameID string) (roleplay.GameTurnResult, error) {
+	s.mu.Lock()
+	pack, ok := s.packs[gameID]
+	s.mu.Unlock()
+	if !ok {
+		return roleplay.GameTurnResult{}, errors.New("story pack is not registered in backend")
+	}
+
+	session, err := roleplay.NewGameSession(gameID, pack)
+	if err != nil {
+		return roleplay.GameTurnResult{}, err
+	}
+
+	s.mu.Lock()
+	s.sessions[session.ID] = session
+	s.mu.Unlock()
+
+	return s.advanceSession(session.ID)
+}
+
+func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.GameTurnResult, error) {
+	s.mu.Lock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return roleplay.GameTurnResult{}, errors.New("session not found")
+	}
+	if session.State == roleplay.SessionStateEnded {
+		result := roleplay.ResultFromSession(session)
+		s.mu.Unlock()
+		return result, nil
+	}
+
+	label := session.ChoiceLabel(choiceID)
+	session.AppendTurn(roleplay.GameTurn{
+		ID:                  roleplay.NewID("turn"),
+		Role:                roleplay.TurnRoleUser,
+		Payload:             []string{label},
+		SelectedChoiceID:    choiceID,
+		SelectedChoiceLabel: label,
+		CreatedAt:           roleplay.NowISO(),
+	})
+	s.mu.Unlock()
+
+	return s.advanceSession(sessionID)
+}
+
+func (s *GameService) GetSession(sessionID string) (roleplay.GameSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		return roleplay.GameSession{}, errors.New("session not found")
+	}
+
+	return session.Clone(), nil
+}
+
+func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult, error) {
+	s.mu.Lock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return roleplay.GameTurnResult{}, errors.New("session not found")
+	}
+	pack := s.packs[session.GameID]
+	config := s.config
+	s.mu.Unlock()
+
+	client := roleplay.NewOpenAIClient(config)
+	result, err := roleplay.RunAITurn(s.ctx, client, pack, session)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, ok := s.sessions[sessionID]; ok {
+		*current = *session
+	}
+
+	return result, err
+}

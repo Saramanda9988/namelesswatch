@@ -1,4 +1,27 @@
-export namespace main {
+export namespace appconf {
+	
+	export class AppConfig {
+	    ai_provider: string;
+	    ai_base_url: string;
+	    ai_model: string;
+	    ai_token?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ai_provider = source["ai_provider"];
+	        this.ai_base_url = source["ai_base_url"];
+	        this.ai_model = source["ai_model"];
+	        this.ai_token = source["ai_token"];
+	    }
+	}
+
+}
+
+export namespace roleplay {
 	
 	export class ChoiceOption {
 	    id: string;

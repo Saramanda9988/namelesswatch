@@ -1,15 +1,22 @@
 import { create } from 'zustand'
 
+import { GetAppConfig, UpdateAppConfig } from '../../wailsjs/go/main/App'
 import { mockGames } from '@/data/mock-games'
-import type { GameSettings, ImportedGame } from '@/types/game'
+import type { AppConfig, GameSettings, ImportedGame } from '@/types/game'
 
 type GameState = {
   games: ImportedGame[]
   activeGameId?: string
   settings: GameSettings
+  config?: AppConfig
+  draftConfig?: AppConfig
   addGame: (game: ImportedGame) => void
   setActiveGame: (gameId: string) => void
   updateSettings: (settings: Partial<GameSettings>) => void
+  fetchConfig: () => Promise<void>
+  setDraftConfig: (config: AppConfig) => void
+  resetDraftConfig: () => void
+  saveDraftConfig: () => Promise<void>
 }
 
 const initialSettings: GameSettings = {
@@ -36,4 +43,27 @@ export const useGameStore = create<GameState>((set) => ({
         ...settings,
       },
     })),
+  fetchConfig: async () => {
+    const config = await GetAppConfig() as AppConfig
+    set({
+      config,
+      draftConfig: { ...config },
+    })
+  },
+  setDraftConfig: (config) => set({ draftConfig: config }),
+  resetDraftConfig: () =>
+    set((state) => ({
+      draftConfig: state.config ? { ...state.config } : undefined,
+    })),
+  saveDraftConfig: async () => {
+    const draftConfig = useGameStore.getState().draftConfig
+    if (!draftConfig) {
+      return
+    }
+    await UpdateAppConfig(draftConfig)
+    set({
+      config: { ...draftConfig },
+      draftConfig: { ...draftConfig },
+    })
+  },
 }))

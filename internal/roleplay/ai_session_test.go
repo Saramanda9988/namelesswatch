@@ -1,4 +1,4 @@
-package main
+package roleplay
 
 import (
 	"context"
@@ -28,7 +28,7 @@ func loadExamplePack(t *testing.T) StoryPack {
 
 	files := make(map[string]string)
 	for _, fileName := range RequiredStoryFiles {
-		content, err := os.ReadFile(filepath.Join("docs", "example", fileName))
+		content, err := os.ReadFile(filepath.Join("..", "..", "docs", "example", fileName))
 		if err != nil {
 			t.Fatalf("read example %s: %v", fileName, err)
 		}

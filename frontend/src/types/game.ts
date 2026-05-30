@@ -87,3 +87,10 @@ export type GameSettings = {
   voiceVolume: number
   uiScale: number
 }
+
+export type AppConfig = {
+  ai_provider: string
+  ai_base_url: string
+  ai_model: string
+  ai_token?: string
+}

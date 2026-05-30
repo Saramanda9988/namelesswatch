@@ -1,4 +1,4 @@
-package main
+package roleplay
 
 import (
 	"bytes"
@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"namelesswatch/internal/appconf"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -45,11 +45,11 @@ type chatCompletionResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func NewOpenAIClientFromEnv() *OpenAIClient {
+func NewOpenAIClient(config appconf.AppConfig) *OpenAIClient {
 	return &OpenAIClient{
-		BaseURL: strings.TrimRight(os.Getenv("OPENAI_BASE_URL"), "/"),
-		APIKey:  os.Getenv("OPENAI_API_KEY"),
-		Model:   os.Getenv("OPENAI_MODEL"),
+		BaseURL: strings.TrimRight(config.AIBaseURL, "/"),
+		APIKey:  config.AIToken,
+		Model:   config.AIModel,
 		Client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -58,16 +58,16 @@ func NewOpenAIClientFromEnv() *OpenAIClient {
 
 func (c *OpenAIClient) Chat(ctx context.Context, messages []ChatMessage) (string, error) {
 	if c == nil {
-		return "", errors.New("OpenAI client is not configured")
+		return "", errors.New("AI client is not configured")
 	}
 	if c.BaseURL == "" {
-		return "", errors.New("OPENAI_BASE_URL is required")
+		return "", errors.New("AI Base URL is required")
 	}
 	if c.APIKey == "" {
-		return "", errors.New("OPENAI_API_KEY is required")
+		return "", errors.New("AI token is required")
 	}
 	if c.Model == "" {
-		return "", errors.New("OPENAI_MODEL is required")
+		return "", errors.New("AI model is required")
 	}
 
 	body, err := json.Marshal(chatCompletionRequest{

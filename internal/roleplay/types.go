@@ -1,4 +1,4 @@
-package main
+package roleplay
 
 import (
 	"crypto/rand"
