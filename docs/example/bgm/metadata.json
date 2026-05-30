@@ -1,0 +1,21 @@
+{
+  "tracks": {
+    "daily": {
+      "name": "平常氛围",
+      "file": "daily.mp3"
+    },
+    "tension": {
+      "name": "紧张氛围",
+      "file": "tension.mp3"
+    },
+    "bad_end": {
+      "name": "失败结局",
+      "file": "bad_end.mp3"
+    }
+  },
+  "sceneDefaults": {
+    "entrance": "daily",
+    "living_room": "daily",
+    "kitchen": "tension"
+  }
+}

@@ -130,6 +130,68 @@ func TestNewLibraryGameParsesPhotoScenes(t *testing.T) {
 	}
 }
 
+func TestNewLibraryGameParsesBGMTracks(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json":     `{"title":"带 BGM 的规则怪谈"}`,
+		"bgm/metadata.json": `{"tracks":{"home_ambient":{"name":"家中低频","file":"home.mp3"},"missing":{"name":"缺失","file":"missing.mp3"},"note":{"name":"文本","file":"note.txt"}},"sceneDefaults":{"entrance":"home_ambient","kitchen":"missing"}}`,
+		"bgm/home.mp3":      "data:audio/mpeg;base64,QUJD",
+		"bgm/note.txt":      "not audio",
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil {
+		t.Fatalf("expected imported game, got report=%#v", report)
+	}
+	if len(game.BGMs) != 1 {
+		t.Fatalf("expected only valid BGM track, got %#v", game.BGMs)
+	}
+	if game.BGMs[0].ID != "home_ambient" || game.BGMs[0].Name != "家中低频" || game.BGMs[0].URL == "" {
+		t.Fatalf("unexpected BGM asset: %#v", game.BGMs[0])
+	}
+
+	storyPack, err := NewStoryPack(game.ID, game.Files)
+	if err != nil {
+		t.Fatalf("new story pack: %v", err)
+	}
+	if len(storyPack.BGMs) != 1 {
+		t.Fatalf("expected story pack BGM, got %#v", storyPack.BGMs)
+	}
+	if storyPack.BGMSceneDefaults["entrance"] != "home_ambient" {
+		t.Fatalf("expected valid scene default, got %#v", storyPack.BGMSceneDefaults)
+	}
+	if _, ok := storyPack.BGMSceneDefaults["kitchen"]; ok {
+		t.Fatalf("invalid scene default should be ignored: %#v", storyPack.BGMSceneDefaults)
+	}
+}
+
+func TestNewLibraryGameAllowsNoBGM(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json": `{"title":"无 BGM 的规则怪谈"}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil {
+		t.Fatalf("expected imported game, got report=%#v", report)
+	}
+	if len(game.BGMs) != 0 {
+		t.Fatalf("expected no BGM tracks, got %#v", game.BGMs)
+	}
+}
+
 func TestNewGameSessionInDirUsesGameAndSessionPath(t *testing.T) {
 	pack := loadExamplePack(t)
 	dir := t.TempDir()
@@ -175,6 +237,85 @@ func TestGameTurnValidationAndFallback(t *testing.T) {
 	}
 	if _, _, err := ParseAIResponse(`not-json`); err == nil {
 		t.Fatal("expected invalid JSON error")
+	}
+}
+
+func TestValidateBGMChange(t *testing.T) {
+	pack := StoryPack{
+		BGMs: []BGMAsset{
+			{ID: "home_ambient", Name: "家中低频", FileName: "home.mp3", URL: "/local/story-assets/game/bgm/home.mp3"},
+		},
+	}
+
+	if err := ValidateBGMChange(&BGMChange{Action: "play", ID: "home_ambient"}, pack); err != nil {
+		t.Fatalf("valid BGM play rejected: %v", err)
+	}
+	if err := ValidateBGMChange(&BGMChange{Action: "stop"}, StoryPack{}); err != nil {
+		t.Fatalf("BGM stop should be accepted without tracks: %v", err)
+	}
+	if err := ValidateBGMChange(&BGMChange{Action: "play", ID: "missing"}, pack); err == nil {
+		t.Fatal("expected unknown BGM id to be rejected")
+	}
+	if err := ValidateBGMChange(&BGMChange{Action: "fade", ID: "home_ambient"}, pack); err == nil {
+		t.Fatal("expected invalid BGM action to be rejected")
+	}
+}
+
+func TestAppendAITurnUpdatesCurrentBGM(t *testing.T) {
+	session := &GameSession{
+		ID:        "session-a",
+		GameID:    "game-a",
+		State:     SessionStatePlaying,
+		Turns:     []GameTurn{},
+		CreatedAt: NowISO(),
+		UpdatedAt: NowISO(),
+	}
+
+	result := appendAITurn(session, AITurnResponse{
+		Type:    "game_turn",
+		State:   "continue",
+		Payload: []string{"你听见墙内传来低频震动。"},
+		BGM:     &BGMChange{Action: "play", ID: "home_ambient"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Options: []ChoiceOption{{ID: "listen", Label: "继续听"}},
+		}},
+	})
+	if session.CurrentBGMID != "home_ambient" || result.CurrentBGMID != "home_ambient" {
+		t.Fatalf("expected current BGM to update, session=%q result=%q", session.CurrentBGMID, result.CurrentBGMID)
+	}
+	if result.Turn.BGM == nil || result.Turn.BGM.ID != "home_ambient" {
+		t.Fatalf("expected BGM change on turn, got %#v", result.Turn.BGM)
+	}
+
+	result = appendAITurn(session, AITurnResponse{
+		Type:    "game_turn",
+		State:   "continue",
+		Payload: []string{"那声音仍然贴着地板流动。"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Options: []ChoiceOption{{ID: "step", Label: "向前一步"}},
+		}},
+	})
+	if session.CurrentBGMID != "home_ambient" || result.CurrentBGMID != "home_ambient" {
+		t.Fatalf("expected missing BGM field to keep current BGM, session=%q result=%q", session.CurrentBGMID, result.CurrentBGMID)
+	}
+
+	result = appendAITurn(session, AITurnResponse{
+		Type:    "game_turn",
+		State:   "continue",
+		Payload: []string{"一切突然安静了。"},
+		BGM:     &BGMChange{Action: "stop"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Options: []ChoiceOption{{ID: "wait", Label: "站在原地"}},
+		}},
+	})
+	if session.CurrentBGMID != "" || result.CurrentBGMID != "" {
+		t.Fatalf("expected BGM stop to clear current BGM, session=%q result=%q", session.CurrentBGMID, result.CurrentBGMID)
 	}
 }
 
@@ -279,6 +420,30 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	}
 	if !strings.Contains(userPrompt, updatedRule) {
 		t.Fatal("expected prompt to include fresh rule.md from session workspace")
+	}
+}
+
+func TestBuildMessagesIncludesBGMContext(t *testing.T) {
+	pack := loadExamplePack(t)
+	pack.BGMs = []BGMAsset{
+		{ID: "home_ambient", Name: "家中低频", FileName: "home.mp3", URL: "/local/story-assets/game/bgm/home.mp3"},
+	}
+	pack.BGMSceneDefaults = map[string]string{"entrance": "home_ambient"}
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.CurrentBGMID = "home_ambient"
+
+	messages := BuildMessages(pack, session, nil, "")
+	if len(messages) != 2 {
+		t.Fatalf("expected system and user messages, got %#v", messages)
+	}
+	userPrompt := messages[1].Content
+	for _, expected := range []string{"Available BGM:", "home_ambient => 家中低频", "Current BGM:", "Scene Default BGM:", "entrance => home_ambient"} {
+		if !strings.Contains(userPrompt, expected) {
+			t.Fatalf("expected prompt to contain %q, got:\n%s", expected, userPrompt)
+		}
 	}
 }
 

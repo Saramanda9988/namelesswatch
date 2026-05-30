@@ -12,6 +12,8 @@ import {
   Settings,
   SunMedium,
   Trash2,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import * as React from 'react'
 
@@ -23,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import { useBgmPlayer } from '@/hooks/use-bgm-player'
 import { useNarrativeReveal } from '@/hooks/use-narrative-reveal'
 import { useGameStore } from '@/stores/game-store'
 import type { roleplay, service } from '../../wailsjs/go/models'
@@ -89,6 +92,9 @@ export function PlayPage() {
   const setActiveGame = useGameStore((state) => state.setActiveGame)
   const textSpeed = useGameStore((state) => state.settings.textSpeed)
   const autoAdvance = useGameStore((state) => state.settings.autoAdvance)
+  const bgmEnabled = useGameStore((state) => state.settings.bgmEnabled)
+  const bgmVolume = useGameStore((state) => state.settings.bgmVolume)
+  const updateSettings = useGameStore((state) => state.updateSettings)
   const resumeSession = useGameStore((state) => state.resumeSession)
   const saveSnapshot = useGameStore((state) => state.saveSnapshot)
   const listSessions = useGameStore((state) => state.listSessions)
@@ -318,6 +324,18 @@ export function PlayPage() {
   }, [activeSceneId, game])
   const sceneImage = activeScene?.url || game?.photoUrls?.[0]
   const mapImage = game?.mapUrls?.[0]
+  const currentBgmId = latestResult?.currentBgmId
+  const currentBgm = React.useMemo(() => {
+    if (!currentBgmId) {
+      return undefined
+    }
+    return game?.bgms?.find((bgm) => bgm.id === currentBgmId && bgm.url)
+  }, [currentBgmId, game?.bgms])
+  const bgmPlayer = useBgmPlayer({
+    track: currentBgm ? { id: currentBgm.id, url: currentBgm.url } : undefined,
+    enabled: bgmEnabled,
+    volume: bgmVolume,
+  })
   const sceneMarkers = React.useMemo<PlaySidebarSceneMarker[]>(() => {
     return (game?.scenes ?? [])
       .filter((scene) => scene.hasPosition)
@@ -336,6 +354,13 @@ export function PlayPage() {
     }
     logRuntimeInfo(`[play] scene resolved game=${game.id} scenes=${game.scenes?.length ?? 0} active=${activeScene?.id ?? activeSceneId ?? ''} image=${sceneImage ?? ''}`)
   }, [activeScene?.id, activeSceneId, game, sceneImage])
+
+  React.useEffect(() => {
+    if (!game || !currentBgmId || currentBgm) {
+      return
+    }
+    logRuntimeError(`[play] bgm missing game=${game.id} bgm=${currentBgmId}`)
+  }, [currentBgm, currentBgmId, game])
 
   const { revealedLines, activeIndex, phase, isComplete, advance } = useNarrativeReveal({
     lines: currentLines,
@@ -376,6 +401,24 @@ export function PlayPage() {
   const visibleNarrativeLine = showChoicePanel && choiceTool?.prompt
     ? choiceTool.prompt
     : revealedLines.at(-1) ?? ''
+
+  function handleBgmControl() {
+    if (!bgmEnabled) {
+      updateSettings({ bgmEnabled: true })
+      return
+    }
+    if (bgmPlayer.isBlocked) {
+      void bgmPlayer.retry()
+      return
+    }
+    updateSettings({ bgmEnabled: false })
+  }
+
+  const bgmButtonLabel = !bgmEnabled
+    ? '启用背景音乐'
+    : bgmPlayer.isBlocked
+      ? '启用音乐播放'
+      : '静音背景音乐'
 
   React.useEffect(() => {
     if (!canAdvance) {
@@ -443,6 +486,18 @@ export function PlayPage() {
               onClick={() => void handleSaveSnapshot()}
             >
               {snapshotBusy ? <Loader2 className="animate-spin" data-icon /> : <Save data-icon />}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
+              aria-label={bgmButtonLabel}
+              title={bgmButtonLabel}
+              disabled={!currentBgmId && !bgmEnabled}
+              onClick={handleBgmControl}
+            >
+              {bgmEnabled && !bgmPlayer.isBlocked ? <Volume2 data-icon /> : <VolumeX data-icon />}
             </Button>
             <Button
               type="button"

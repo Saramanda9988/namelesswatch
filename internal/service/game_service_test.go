@@ -1,9 +1,12 @@
 package service
 
 import (
+	"namelesswatch/internal/appconf"
 	"namelesswatch/internal/roleplay"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -68,11 +71,62 @@ func TestGameServiceCRUDPersistsJSON(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndMaterializeLibraryGameBGMAssets(t *testing.T) {
+	setTestUserConfigDir(t)
+
+	files := testGameFiles(t)
+	files["bgm/metadata.json"] = `{"tracks":{"home_ambient":{"name":"家中低频","file":"home.mp3"}}}`
+	files["bgm/home.mp3"] = "data:audio/mpeg;base64,QUJD"
+
+	game, pack, err := normalizeAndMaterializeLibraryGame(roleplay.LibraryGame{
+		ID:    "bgm-game",
+		Files: files,
+	})
+	if err != nil {
+		t.Fatalf("normalize and materialize: %v", err)
+	}
+	if len(game.BGMs) != 1 || len(pack.BGMs) != 1 {
+		t.Fatalf("expected materialized BGM in game and pack, game=%#v pack=%#v", game.BGMs, pack.BGMs)
+	}
+	if !strings.HasPrefix(game.BGMs[0].URL, "/local/story-assets/bgm-game/bgm/home.mp3") {
+		t.Fatalf("unexpected BGM URL: %s", game.BGMs[0].URL)
+	}
+	if game.Files["bgm/home.mp3"] != game.BGMs[0].URL {
+		t.Fatalf("expected game file to be replaced with local URL, file=%q bgm=%q", game.Files["bgm/home.mp3"], game.BGMs[0].URL)
+	}
+
+	assetRoot, err := appconf.GetSubDir(storyAssetsDirName)
+	if err != nil {
+		t.Fatalf("get story assets dir: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(assetRoot, "bgm-game", "bgm", "home.mp3"))
+	if err != nil {
+		t.Fatalf("read materialized BGM: %v", err)
+	}
+	if string(data) != "ABC" {
+		t.Fatalf("expected decoded audio bytes, got %q", string(data))
+	}
+}
+
 func testLibraryGame(t *testing.T, id string) roleplay.LibraryGame {
 	t.Helper()
 
 	return roleplay.LibraryGame{
 		ID:    id,
 		Files: testGameFiles(t),
+	}
+}
+
+func setTestUserConfigDir(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("APPDATA", root)
+	case "darwin":
+		t.Setenv("HOME", root)
+	default:
+		t.Setenv("XDG_CONFIG_HOME", root)
 	}
 }

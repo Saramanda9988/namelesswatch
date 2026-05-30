@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -143,6 +144,31 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	} else {
 		builder.WriteString("- " + session.CurrentSceneID + "\n")
 	}
+	builder.WriteString("\nAvailable BGM:\n")
+	if len(pack.BGMs) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, bgm := range pack.BGMs {
+			builder.WriteString(fmt.Sprintf("- %s => %s\n", bgm.ID, bgm.Name))
+		}
+	}
+	builder.WriteString("\nCurrent BGM:\n")
+	if session.CurrentBGMID == "" {
+		builder.WriteString("- none\n")
+	} else {
+		builder.WriteString("- " + session.CurrentBGMID + "\n")
+	}
+	if len(pack.BGMSceneDefaults) > 0 {
+		builder.WriteString("\nScene Default BGM:\n")
+		sceneIDs := make([]string, 0, len(pack.BGMSceneDefaults))
+		for sceneID := range pack.BGMSceneDefaults {
+			sceneIDs = append(sceneIDs, sceneID)
+		}
+		slices.Sort(sceneIDs)
+		for _, sceneID := range sceneIDs {
+			builder.WriteString(fmt.Sprintf("- %s => %s\n", sceneID, pack.BGMSceneDefaults[sceneID]))
+		}
+	}
 	builder.WriteString("\n\nRecent Turns:\n")
 	for _, turn := range recentTurns(session.Turns, 12) {
 		builder.WriteString(fmt.Sprintf("- %s: %s", turn.Role, strings.Join(turn.Payload, " / ")))
@@ -199,9 +225,13 @@ func BuildSystemPrompt() string {
 	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
 	builder.WriteString("第一回合必须是开场叙事：从 scene.md 当前情境开始，不能假设用户已经行动，不能直接触发 endings.md 的任何结局。\n")
 	builder.WriteString("如果需要切换场景，只能切换到 Available Scenes 中列出的 scene id，并在 scene 字段里返回 {" + "\"id\":\"...\",\"reason\":\"...\"" + "}。\n")
+	builder.WriteString("如果场景或氛围明显变化，可以在 game_turn 中返回 bgm 字段。bgm 只能是 {" + "\"action\":\"play\",\"id\":\"...\",\"reason\":\"...\"" + "} 或 {" + "\"action\":\"stop\",\"reason\":\"...\"" + "}。\n")
+	builder.WriteString("bgm.play 的 id 必须来自 Available BGM。Current BGM 已适合时不要返回 bgm 字段，前端会继续循环播放当前曲目。\n")
+	builder.WriteString("不要把 BGM 放入 tools；tools 只用于用户 choice。不要在 payload 中说明音乐切换，除非这是剧情世界中用户能听见的声音。\n")
 	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")
 	builder.WriteString("agent_terminal 不会展示给用户。不要依赖或输出本机绝对路径。\n\n")
 	builder.WriteString(`game_turn: {"type":"game_turn","state":"continue","payload":["..."],"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
+	builder.WriteString(`game_turn_with_state_changes: {"type":"game_turn","state":"continue","payload":["..."],"scene":{"id":"...","reason":"..."},"bgm":{"action":"play","id":"...","reason":"..."},"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
 	builder.WriteString(`ended: {"type":"game_turn","state":"ended","payload":["..."],"tools":[],"ending":{"id":"...","title":"...","kind":"good|bad|loop|neutral"}}` + "\n")
 	builder.WriteString(`agent_terminal: {"type":"agent_terminal","reason":"...","commands":[{"command":"..."}]}`)
 	return builder.String()
@@ -237,6 +267,7 @@ type AITurnResponse struct {
 	Payload []string     `json:"payload"`
 	Tools   []ChoiceTool `json:"tools"`
 	Scene   *SceneChange `json:"scene,omitempty"`
+	BGM     *BGMChange   `json:"bgm,omitempty"`
 	Ending  *Ending      `json:"ending,omitempty"`
 }
 
@@ -330,12 +361,44 @@ func ValidateGameTurnForSession(response AITurnResponse, session *GameSession, p
 			return fmt.Errorf("scene %q is not available", response.Scene.ID)
 		}
 	}
+	if err := ValidateBGMChange(response.BGM, pack); err != nil {
+		return err
+	}
 	return nil
 }
 
 func sceneExists(scenes []SceneAsset, sceneID string) bool {
 	for _, scene := range scenes {
 		if scene.ID == sceneID {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidateBGMChange(change *BGMChange, pack StoryPack) error {
+	if change == nil {
+		return nil
+	}
+	switch strings.TrimSpace(change.Action) {
+	case "play":
+		if strings.TrimSpace(change.ID) == "" {
+			return errors.New("bgm.play requires id")
+		}
+		if !bgmExists(pack.BGMs, change.ID) {
+			return fmt.Errorf("bgm %q is not available", change.ID)
+		}
+	case "stop":
+		return nil
+	default:
+		return errors.New("bgm action must be play or stop")
+	}
+	return nil
+}
+
+func bgmExists(bgms []BGMAsset, bgmID string) bool {
+	for _, bgm := range bgms {
+		if bgm.ID == bgmID {
 			return true
 		}
 	}
@@ -389,6 +452,7 @@ func appendAITurn(session *GameSession, response AITurnResponse) GameTurnResult 
 		Payload:   response.Payload,
 		Tools:     tools,
 		Scene:     response.Scene,
+		BGM:       response.BGM,
 		Ending:    response.Ending,
 		CreatedAt: NowISO(),
 	}
@@ -396,19 +460,29 @@ func appendAITurn(session *GameSession, response AITurnResponse) GameTurnResult 
 	if response.Scene != nil {
 		session.CurrentSceneID = response.Scene.ID
 	}
+	if response.BGM != nil {
+		switch response.BGM.Action {
+		case "play":
+			session.CurrentBGMID = response.BGM.ID
+		case "stop":
+			session.CurrentBGMID = ""
+		}
+	}
 	if response.State == "ended" {
 		session.State = SessionStateEnded
 	}
 
 	return GameTurnResult{
-		SessionID: session.ID,
-		GameID:    session.GameID,
-		State:     session.State,
-		Payload:   response.Payload,
-		Tools:     tools,
-		Scene:     response.Scene,
-		Ending:    response.Ending,
-		Turn:      turn,
+		SessionID:    session.ID,
+		GameID:       session.GameID,
+		State:        session.State,
+		Payload:      response.Payload,
+		Tools:        tools,
+		Scene:        response.Scene,
+		BGM:          response.BGM,
+		CurrentBGMID: session.CurrentBGMID,
+		Ending:       response.Ending,
+		Turn:         turn,
 	}
 }
 

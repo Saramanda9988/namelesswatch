@@ -304,6 +304,11 @@ function isImportableStoryFile(file: File) {
     || name.endsWith('.jpeg')
     || name.endsWith('.webp')
     || name.endsWith('.gif')
+    || name.endsWith('.mp3')
+    || name.endsWith('.ogg')
+    || name.endsWith('.wav')
+    || name.endsWith('.m4a')
+    || name.endsWith('.webm')
   )
 }
 

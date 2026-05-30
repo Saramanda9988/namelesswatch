@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Cpu, Gauge, KeyRound, Link2, Map, MonitorCog, Save, Volume2 } from 'lucide-react'
+import { ArrowLeft, Bot, Cpu, Gauge, KeyRound, Link2, Map, MonitorCog, Music, Save, Volume2 } from 'lucide-react'
 import type * as React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -183,6 +183,21 @@ export function SettingsPage() {
                   max={100}
                   suffix="%"
                   onChange={(voiceVolume) => updateSettings({ voiceVolume })}
+                />
+                <SettingToggle
+                  icon={<Music className="size-5" />}
+                  label="背景音乐"
+                  checked={settings.bgmEnabled}
+                  onChange={(bgmEnabled) => updateSettings({ bgmEnabled })}
+                />
+                <SettingRange
+                  icon={<Volume2 className="size-5" />}
+                  label="BGM 音量"
+                  value={settings.bgmVolume}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(bgmVolume) => updateSettings({ bgmVolume })}
                 />
                 <SettingRange
                   icon={<MonitorCog className="size-5" />}

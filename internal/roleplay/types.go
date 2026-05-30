@@ -27,10 +27,12 @@ var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md",
 const MetadataFileName = "metadata.json"
 
 type StoryPack struct {
-	ID      string            `json:"id"`
-	Files   map[string]string `json:"files"`
-	Scenes  []SceneAsset      `json:"scenes,omitempty"`
-	MapURLs []string          `json:"mapUrls,omitempty"`
+	ID               string            `json:"id"`
+	Files            map[string]string `json:"files"`
+	Scenes           []SceneAsset      `json:"scenes,omitempty"`
+	BGMs             []BGMAsset        `json:"bgms,omitempty"`
+	BGMSceneDefaults map[string]string `json:"bgmSceneDefaults,omitempty"`
+	MapURLs          []string          `json:"mapUrls,omitempty"`
 }
 
 type GameMetadata struct {
@@ -55,6 +57,7 @@ type LibraryGame struct {
 	PhotoURLs  []string          `json:"photoUrls"`
 	MapURLs    []string          `json:"mapUrls"`
 	Scenes     []SceneAsset      `json:"scenes,omitempty"`
+	BGMs       []BGMAsset        `json:"bgms,omitempty"`
 }
 
 type ImportGameResult struct {
@@ -69,6 +72,7 @@ type GameSession struct {
 	GameID         string     `json:"gameId"`
 	State          string     `json:"state"`
 	CurrentSceneID string     `json:"currentSceneId,omitempty"`
+	CurrentBGMID   string     `json:"currentBgmId,omitempty"`
 	WorkspacePath  string     `json:"workspacePath"`
 	MemoryPath     string     `json:"memoryPath"`
 	Turns          []GameTurn `json:"turns"`
@@ -87,19 +91,22 @@ type GameTurn struct {
 	SelectedChoiceLabel string       `json:"selectedChoiceLabel,omitempty"`
 	Tools               []ChoiceTool `json:"tools,omitempty"`
 	Scene               *SceneChange `json:"scene,omitempty"`
+	BGM                 *BGMChange   `json:"bgm,omitempty"`
 	Ending              *Ending      `json:"ending,omitempty"`
 	CreatedAt           string       `json:"createdAt"`
 }
 
 type GameTurnResult struct {
-	SessionID string       `json:"sessionId"`
-	GameID    string       `json:"gameId"`
-	State     string       `json:"state"`
-	Payload   []string     `json:"payload"`
-	Tools     []ChoiceTool `json:"tools"`
-	Scene     *SceneChange `json:"scene,omitempty"`
-	Ending    *Ending      `json:"ending,omitempty"`
-	Turn      GameTurn     `json:"turn"`
+	SessionID    string       `json:"sessionId"`
+	GameID       string       `json:"gameId"`
+	State        string       `json:"state"`
+	Payload      []string     `json:"payload"`
+	Tools        []ChoiceTool `json:"tools"`
+	Scene        *SceneChange `json:"scene,omitempty"`
+	BGM          *BGMChange   `json:"bgm,omitempty"`
+	CurrentBGMID string       `json:"currentBgmId,omitempty"`
+	Ending       *Ending      `json:"ending,omitempty"`
+	Turn         GameTurn     `json:"turn"`
 }
 
 type ChoiceTool struct {
@@ -124,8 +131,21 @@ type SceneAsset struct {
 	HasPosition bool    `json:"hasPosition"`
 }
 
+type BGMAsset struct {
+	ID       string `json:"id"`
+	Name     string `json:"name,omitempty"`
+	FileName string `json:"fileName"`
+	URL      string `json:"url"`
+}
+
 type SceneChange struct {
 	ID     string `json:"id"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type BGMChange struct {
+	Action string `json:"action"`
+	ID     string `json:"id,omitempty"`
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -173,11 +193,14 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 		return StoryPack{}, fmt.Errorf("missing story pack files: %s", strings.Join(missing, ", "))
 	}
 
+	bgms := parseBGMAssets(normalized)
 	return StoryPack{
-		ID:      gameID,
-		Files:   normalized,
-		Scenes:  orderScenesWithInitial(parseSceneAssets(normalized), parseInitialScene(normalized)),
-		MapURLs: parseMapURLs(normalized),
+		ID:               gameID,
+		Files:            normalized,
+		Scenes:           orderScenesWithInitial(parseSceneAssets(normalized), parseInitialScene(normalized)),
+		BGMs:             bgms,
+		BGMSceneDefaults: parseBGMSceneDefaults(normalized, bgms),
+		MapURLs:          parseMapURLs(normalized),
 	}, nil
 }
 
@@ -188,6 +211,9 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		if _, ok := normalized[strings.ToLower(fileName)]; ok {
 			validFiles = append(validFiles, fileName)
 		}
+	}
+	if _, ok := normalized[normalizeRelativePath("bgm/metadata.json")]; ok {
+		validFiles = append(validFiles, "bgm/metadata.json")
 	}
 
 	missing := requiredImportFilesMissing(normalized)
@@ -223,6 +249,7 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		ImportedAt: NowISO(),
 		Files:      normalized,
 		Scenes:     orderScenesWithInitial(parseSceneAssets(normalized), metadata.InitialScene),
+		BGMs:       parseBGMAssets(normalized),
 		MapURLs:    parseMapURLs(normalized),
 	}
 	for _, scene := range game.Scenes {
@@ -295,6 +322,7 @@ func newGameSessionWithWorkspace(sessionID, gameID string, pack StoryPack, works
 		GameID:         gameID,
 		State:          SessionStatePlaying,
 		CurrentSceneID: currentSceneID,
+		CurrentBGMID:   "",
 		WorkspacePath:  workspace,
 		MemoryPath:     filepath.Join(workspace, "memory.md"),
 		Turns:          []GameTurn{},
@@ -336,6 +364,7 @@ func (s *GameSession) Clone() GameSession {
 		GameID:         s.GameID,
 		State:          s.State,
 		CurrentSceneID: s.CurrentSceneID,
+		CurrentBGMID:   s.CurrentBGMID,
 		WorkspacePath:  s.WorkspacePath,
 		MemoryPath:     s.MemoryPath,
 		Turns:          turns,
@@ -357,14 +386,16 @@ func ResultFromSession(session *GameSession) GameTurnResult {
 	}
 
 	return GameTurnResult{
-		SessionID: session.ID,
-		GameID:    session.GameID,
-		State:     session.State,
-		Payload:   last.Payload,
-		Tools:     last.Tools,
-		Scene:     last.Scene,
-		Ending:    last.Ending,
-		Turn:      last,
+		SessionID:    session.ID,
+		GameID:       session.GameID,
+		State:        session.State,
+		Payload:      last.Payload,
+		Tools:        last.Tools,
+		Scene:        last.Scene,
+		BGM:          last.BGM,
+		CurrentBGMID: session.CurrentBGMID,
+		Ending:       last.Ending,
+		Turn:         last,
 	}
 }
 
@@ -466,6 +497,106 @@ func parseSceneAssets(files map[string]string) []SceneAsset {
 	}
 
 	return scenes
+}
+
+type bgmMetadata struct {
+	Tracks        map[string]bgmTrackMetadata `json:"tracks"`
+	SceneDefaults map[string]string           `json:"sceneDefaults"`
+}
+
+type bgmTrackMetadata struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+}
+
+func parseBGMMetadata(files map[string]string) bgmMetadata {
+	metadataKey := normalizeRelativePath("bgm/metadata.json")
+	metadataRaw, ok := files[metadataKey]
+	if !ok || strings.TrimSpace(metadataRaw) == "" {
+		return bgmMetadata{}
+	}
+
+	var metadata bgmMetadata
+	if err := json.Unmarshal([]byte(metadataRaw), &metadata); err != nil {
+		return bgmMetadata{}
+	}
+	return metadata
+}
+
+func parseBGMAssets(files map[string]string) []BGMAsset {
+	metadata := parseBGMMetadata(files)
+	if len(metadata.Tracks) == 0 {
+		return []BGMAsset{}
+	}
+
+	bgms := make([]BGMAsset, 0, len(metadata.Tracks))
+	for trackID, track := range metadata.Tracks {
+		id := strings.TrimSpace(trackID)
+		fileName := strings.TrimSpace(track.File)
+		if id == "" || fileName == "" || !isSupportedBGMAudioFile(fileName) {
+			continue
+		}
+
+		assetKey := normalizeRelativePath(path.Join("bgm", strings.ReplaceAll(fileName, "\\", "/")))
+		if !strings.HasPrefix(assetKey, "bgm/") {
+			continue
+		}
+		url := strings.TrimSpace(files[assetKey])
+		if url == "" {
+			continue
+		}
+
+		name := strings.TrimSpace(track.Name)
+		if name == "" {
+			name = id
+		}
+		bgms = append(bgms, BGMAsset{
+			ID:       id,
+			Name:     name,
+			FileName: fileName,
+			URL:      url,
+		})
+	}
+
+	slices.SortFunc(bgms, func(a, b BGMAsset) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return bgms
+}
+
+func parseBGMSceneDefaults(files map[string]string, bgms []BGMAsset) map[string]string {
+	metadata := parseBGMMetadata(files)
+	if len(metadata.SceneDefaults) == 0 || len(bgms) == 0 {
+		return nil
+	}
+
+	available := make(map[string]bool, len(bgms))
+	for _, bgm := range bgms {
+		available[bgm.ID] = true
+	}
+
+	defaults := make(map[string]string, len(metadata.SceneDefaults))
+	for sceneID, bgmID := range metadata.SceneDefaults {
+		sceneID = strings.TrimSpace(sceneID)
+		bgmID = strings.TrimSpace(bgmID)
+		if sceneID == "" || bgmID == "" || !available[bgmID] {
+			continue
+		}
+		defaults[sceneID] = bgmID
+	}
+	if len(defaults) == 0 {
+		return nil
+	}
+	return defaults
+}
+
+func isSupportedBGMAudioFile(fileName string) bool {
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".mp3", ".ogg", ".wav", ".m4a", ".webm":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseMapURLs locates the optional map background image bundled with a story pack.

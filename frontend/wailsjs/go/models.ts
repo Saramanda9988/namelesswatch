@@ -23,6 +23,40 @@ export namespace appconf {
 
 export namespace roleplay {
 	
+	export class BGMAsset {
+	    id: string;
+	    name?: string;
+	    fileName: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BGMAsset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.fileName = source["fileName"];
+	        this.url = source["url"];
+	    }
+	}
+	export class BGMChange {
+	    action: string;
+	    id?: string;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BGMChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.action = source["action"];
+	        this.id = source["id"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class ChoiceOption {
 	    id: string;
 	    label: string;
@@ -111,6 +145,7 @@ export namespace roleplay {
 	    selectedChoiceLabel?: string;
 	    tools?: ChoiceTool[];
 	    scene?: SceneChange;
+	    bgm?: BGMChange;
 	    ending?: Ending;
 	    createdAt: string;
 	
@@ -127,6 +162,7 @@ export namespace roleplay {
 	        this.selectedChoiceLabel = source["selectedChoiceLabel"];
 	        this.tools = this.convertValues(source["tools"], ChoiceTool);
 	        this.scene = this.convertValues(source["scene"], SceneChange);
+	        this.bgm = this.convertValues(source["bgm"], BGMChange);
 	        this.ending = this.convertValues(source["ending"], Ending);
 	        this.createdAt = source["createdAt"];
 	    }
@@ -154,6 +190,7 @@ export namespace roleplay {
 	    gameId: string;
 	    state: string;
 	    currentSceneId?: string;
+	    currentBgmId?: string;
 	    workspacePath: string;
 	    memoryPath: string;
 	    turns: GameTurn[];
@@ -173,6 +210,7 @@ export namespace roleplay {
 	        this.gameId = source["gameId"];
 	        this.state = source["state"];
 	        this.currentSceneId = source["currentSceneId"];
+	        this.currentBgmId = source["currentBgmId"];
 	        this.workspacePath = source["workspacePath"];
 	        this.memoryPath = source["memoryPath"];
 	        this.turns = this.convertValues(source["turns"], GameTurn);
@@ -209,6 +247,8 @@ export namespace roleplay {
 	    payload: string[];
 	    tools: ChoiceTool[];
 	    scene?: SceneChange;
+	    bgm?: BGMChange;
+	    currentBgmId?: string;
 	    ending?: Ending;
 	    turn: GameTurn;
 	
@@ -224,6 +264,8 @@ export namespace roleplay {
 	        this.payload = source["payload"];
 	        this.tools = this.convertValues(source["tools"], ChoiceTool);
 	        this.scene = this.convertValues(source["scene"], SceneChange);
+	        this.bgm = this.convertValues(source["bgm"], BGMChange);
+	        this.currentBgmId = source["currentBgmId"];
 	        this.ending = this.convertValues(source["ending"], Ending);
 	        this.turn = this.convertValues(source["turn"], GameTurn);
 	    }
@@ -278,6 +320,7 @@ export namespace roleplay {
 	    photoUrls: string[];
 	    mapUrls: string[];
 	    scenes?: SceneAsset[];
+	    bgms?: BGMAsset[];
 	
 	    static createFrom(source: any = {}) {
 	        return new LibraryGame(source);
@@ -292,6 +335,7 @@ export namespace roleplay {
 	        this.photoUrls = source["photoUrls"];
 	        this.mapUrls = source["mapUrls"];
 	        this.scenes = this.convertValues(source["scenes"], SceneAsset);
+	        this.bgms = this.convertValues(source["bgms"], BGMAsset);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

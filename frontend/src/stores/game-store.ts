@@ -8,6 +8,8 @@ type GameSettings = {
   autoAdvance: boolean
   showMap: boolean
   voiceVolume: number
+  bgmEnabled: boolean
+  bgmVolume: number
   uiScale: number
 }
 
@@ -42,6 +44,8 @@ const initialSettings: GameSettings = {
   autoAdvance: false,
   showMap: true,
   voiceVolume: 64,
+  bgmEnabled: true,
+  bgmVolume: 64,
   uiScale: 100,
 }
 

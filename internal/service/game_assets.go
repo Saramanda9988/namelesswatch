@@ -27,13 +27,13 @@ func materializeLibraryGameAssets(game roleplay.LibraryGame) (roleplay.LibraryGa
 	}
 
 	for name, content := range game.Files {
-		if !isPackImagePath(name) || strings.HasPrefix(strings.TrimSpace(content), "/local/") {
+		if !isPackAssetPath(name) || strings.HasPrefix(strings.TrimSpace(content), "/local/") {
 			continue
 		}
 
-		data, err := imageAssetBytes(content)
+		data, err := assetBytes(content)
 		if err != nil {
-			return roleplay.LibraryGame{}, fmt.Errorf("read imported image %s: %w", name, err)
+			return roleplay.LibraryGame{}, fmt.Errorf("read imported asset %s: %w", name, err)
 		}
 		if len(data) == 0 {
 			continue
@@ -47,7 +47,7 @@ func materializeLibraryGameAssets(game roleplay.LibraryGame) (roleplay.LibraryGa
 			return roleplay.LibraryGame{}, fmt.Errorf("create asset directory: %w", err)
 		}
 		if err := os.WriteFile(assetPath, data, 0o600); err != nil {
-			return roleplay.LibraryGame{}, fmt.Errorf("write imported image %s: %w", name, err)
+			return roleplay.LibraryGame{}, fmt.Errorf("write imported asset %s: %w", name, err)
 		}
 
 		nextFiles[name] = assetURL
@@ -68,7 +68,7 @@ func deleteLibraryGameAssets(gameID string) error {
 	return os.RemoveAll(filepath.Join(root, safePathSegment(gameID)))
 }
 
-func imageAssetBytes(value string) ([]byte, error) {
+func assetBytes(value string) ([]byte, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
@@ -146,6 +146,23 @@ func isPackImagePath(name string) bool {
 	default:
 		return false
 	}
+}
+
+func isPackAudioPath(name string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(name, "\\", "/"))
+	if !strings.HasPrefix(lower, "bgm/") {
+		return false
+	}
+	switch filepath.Ext(lower) {
+	case ".mp3", ".ogg", ".wav", ".m4a", ".webm":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPackAssetPath(name string) bool {
+	return isPackImagePath(name) || isPackAudioPath(name)
 }
 
 func encodePathSegments(segments []string) string {

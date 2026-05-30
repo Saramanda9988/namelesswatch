@@ -318,6 +318,7 @@ func cloneLibraryGame(game roleplay.LibraryGame) roleplay.LibraryGame {
 	game.PhotoURLs = append([]string{}, game.PhotoURLs...)
 	game.MapURLs = append([]string{}, game.MapURLs...)
 	game.Scenes = append([]roleplay.SceneAsset{}, game.Scenes...)
+	game.BGMs = append([]roleplay.BGMAsset{}, game.BGMs...)
 	return game
 }
 
@@ -349,6 +350,7 @@ func normalizeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, role
 	}
 	game.Files = pack.Files
 	game.Scenes = append([]roleplay.SceneAsset{}, pack.Scenes...)
+	game.BGMs = append([]roleplay.BGMAsset{}, pack.BGMs...)
 	if len(pack.Scenes) > 0 {
 		game.PhotoURLs = game.PhotoURLs[:0]
 		for _, scene := range pack.Scenes {
