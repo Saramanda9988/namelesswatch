@@ -231,6 +231,57 @@ func TestRunAITurnRepairsFirstTurnEnding(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	updatedRule := "每次推进前必须重新检查这条最新规则。"
+	if err := os.WriteFile(filepath.Join(session.WorkspacePath, "rule.md"), []byte(updatedRule), 0o600); err != nil {
+		t.Fatalf("write session rule: %v", err)
+	}
+	session.AppendTurn(GameTurn{
+		ID:      NewID("turn"),
+		Role:    TurnRoleAI,
+		Payload: []string{"你站在玄关。"},
+		Tools: []ChoiceTool{
+			{
+				Type: "choice",
+				ID:   "main",
+				Options: []ChoiceOption{
+					{ID: "check_watch", Label: "查看手表"},
+					{ID: "open_door", Label: "打开门"},
+				},
+			},
+		},
+	})
+	session.AppendTurn(GameTurn{
+		ID:                  NewID("turn"),
+		Role:                TurnRoleUser,
+		Payload:             []string{"查看手表"},
+		SelectedChoiceID:    "check_watch",
+		SelectedChoiceLabel: "查看手表",
+	})
+
+	messages := BuildMessages(pack, session, nil, "")
+	if len(messages) != 2 {
+		t.Fatalf("expected system and user messages, got %#v", messages)
+	}
+	systemPrompt := messages[0].Content
+	userPrompt := messages[1].Content
+	if !strings.Contains(systemPrompt, "Mandatory Rule Review After User Choice") {
+		t.Fatal("expected system prompt to require rule review workflow")
+	}
+	if !strings.Contains(userPrompt, "Mandatory Rule Review After User Choice") {
+		t.Fatal("expected user prompt to include mandatory rule review section")
+	}
+	if !strings.Contains(userPrompt, updatedRule) {
+		t.Fatal("expected prompt to include fresh rule.md from session workspace")
+	}
+}
+
 func TestRunAITurnFallsBackAfterFailedRepair(t *testing.T) {
 	pack := loadExamplePack(t)
 	session, err := NewGameSession("example", pack)

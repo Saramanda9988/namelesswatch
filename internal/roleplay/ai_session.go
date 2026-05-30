@@ -17,7 +17,7 @@ type TurnLogger func(format string, args ...interface{})
 const gameHostInstructions = `你是一个规则怪谈的主持人，请遵守以下规则，和用户进行一次规则怪谈的游玩
 
 1. 故事的开头大纲在 scene.md 中，故事结局在 endings.md 
-2. 必须遵守 rule.md 中的规则，你的所有场景描写，对用户的引导，都必须遵守规则
+2. 必须遵守 rule.md 中的规则，你的所有场景描写，对用户的引导，都必须遵守规则；每次用户选择完选项后，必须重新阅读最新 rule.md 并 和你之前的一些 memory.md 对照后再推进剧情
 3. true.md 是故事的真相，不能让用户知晓，你自己用作逻辑推断即可
 4. memory.md 是你的记事本，用户的前后操作的关联，可能走向的结局，可以记录在里面让你参考
 5. 请按照描述故事的方法进行叙述，包含一定的场景描写，但是切记你在讲故事，对用户的称呼始终是你`
@@ -124,7 +124,7 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	builder.WriteString("Story Pack:\n")
 	for _, fileName := range []string{"scene.md", "rule.md", "true.md", "endings.md"} {
 		builder.WriteString("\n--- " + fileName + " ---\n")
-		builder.WriteString(pack.Files[fileName])
+		builder.WriteString(promptStoryFile(pack, session, fileName))
 		builder.WriteString("\n")
 	}
 	builder.WriteString("\n--- current memory.md ---\n")
@@ -158,6 +158,13 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 		builder.WriteString("\nCurrent Objective:\n")
 		builder.WriteString("这是游戏第一回合。只能从 scene.md 的开场处开始，不能假设用户已经做出任何选择，不能跳到规则后果或 endings.md 中的结局。\n")
 	}
+	if requiresRuleReview(session) {
+		builder.WriteString("\nMandatory Rule Review After User Choice:\n")
+		builder.WriteString("最近一回合是用户通过 choice 工具做出的选择。生成任何 game_turn 之前，必须先重新阅读并逐条对照以下最新 rule.md：场景描写、后果触发、可用选项、场景切换、结局判定都不得偏离规则；如果当前剧情与规则冲突，必须以 rule.md 为准修正。\n")
+		builder.WriteString("\n--- rule.md (fresh read) ---\n")
+		builder.WriteString(promptStoryFile(pack, session, "rule.md"))
+		builder.WriteString("\n")
+	}
 
 	if len(terminalResults) > 0 {
 		builder.WriteString("\nTerminal Results:\n")
@@ -182,6 +189,9 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 func BuildSystemPrompt() string {
 	var builder strings.Builder
 	builder.WriteString(gameHostInstructions)
+	builder.WriteString("\n\n工作流要求：\n")
+	builder.WriteString("每次 Recent Turns 最后一条是用户 choice 后，你必须先完成 Mandatory Rule Review After User Choice 中的 rule.md 复核，再输出本回合 game_turn。\n")
+	builder.WriteString("如果上下文缺少该复核区，必须先返回 agent_terminal 读取 rule.md，不能直接推进剧情。\n")
 	builder.WriteString("\n\n输出格式要求：\n")
 	builder.WriteString("必须只输出严格 JSON，不允许 Markdown 包裹或额外解释。\n")
 	builder.WriteString("不要直接泄露 true.md 的隐藏真相；前端只会展示 game_turn.payload。\n")
@@ -195,6 +205,23 @@ func BuildSystemPrompt() string {
 	builder.WriteString(`ended: {"type":"game_turn","state":"ended","payload":["..."],"tools":[],"ending":{"id":"...","title":"...","kind":"good|bad|loop|neutral"}}` + "\n")
 	builder.WriteString(`agent_terminal: {"type":"agent_terminal","reason":"...","commands":[{"command":"..."}]}`)
 	return builder.String()
+}
+
+func promptStoryFile(pack StoryPack, session *GameSession, fileName string) string {
+	if session != nil && fileName == "rule.md" {
+		if content, err := ReadWorkspaceFile(session, fileName); err == nil {
+			return content
+		}
+	}
+	return pack.Files[strings.ToLower(fileName)]
+}
+
+func requiresRuleReview(session *GameSession) bool {
+	if session == nil || len(session.Turns) == 0 {
+		return false
+	}
+	lastTurn := session.Turns[len(session.Turns)-1]
+	return lastTurn.Role == TurnRoleUser && strings.TrimSpace(lastTurn.SelectedChoiceID) != ""
 }
 
 func recentTurns(turns []GameTurn, limit int) []GameTurn {
