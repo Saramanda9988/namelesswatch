@@ -1,7 +1,6 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import {
   ArrowLeft,
-  Bot,
   CheckCircle2,
   ChevronDown,
   FolderOpen,
@@ -417,6 +416,11 @@ export function PlayPage() {
                 <ArrowLeft data-icon />
               </Link>
             </Button>
+            <Button asChild variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="设置" title="设置">
+              <Link to="/settings">
+                <Settings data-icon />
+              </Link>
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -454,7 +458,6 @@ export function PlayPage() {
           </nav>
 
           <div className="absolute right-4 top-4 z-20 flex items-center gap-2 lg:hidden">
-            <Badge variant={isEnded ? 'default' : 'secondary'}>{isEnded ? '已结束' : 'AI 主持'}</Badge>
             <Button
               type="button"
               variant="outline"
@@ -466,18 +469,6 @@ export function PlayPage() {
             >
               <Map data-icon />
             </Button>
-            <Button asChild variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="设置">
-              <Link to="/settings">
-                <Settings data-icon />
-              </Link>
-            </Button>
-          </div>
-
-            <div className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2 rounded-md border bg-background/55 px-3 py-2 text-sm text-muted-foreground backdrop-blur-md md:flex">
-              <Bot className="size-4" />
-              <span className="max-w-[44vw] truncate">{game.title}</span>
-              <Separator orientation="vertical" className="h-4" />
-              <span>{sessionId ? `Session ${sessionId.slice(-6)}` : '准备会话'}</span>
           </div>
 
           <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
