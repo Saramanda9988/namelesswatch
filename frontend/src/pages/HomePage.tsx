@@ -1,7 +1,8 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { BookOpen, FolderPlus, Gamepad2, History, Play, Settings, Trash2 } from 'lucide-react'
+import { FolderPlus, Gamepad2, History, Play, Search, Settings, Trash2 } from 'lucide-react'
 import * as React from 'react'
 
+import { SettingsDialog } from '@/components/settings-dialog'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/game-store'
+import type { roleplay } from '../../wailsjs/go/models'
 import { LogInfo } from '../../wailsjs/runtime/runtime'
 
 const directoryInputProps = {
@@ -43,6 +45,7 @@ export function HomePage() {
   const [deletingGameId, setDeletingGameId] = React.useState<string>()
   const [search, setSearch] = React.useState('')
   const [continueByGame, setContinueByGame] = React.useState<Record<string, string>>({})
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
 
   React.useEffect(() => {
     void fetchGames()
@@ -159,115 +162,177 @@ export function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#111315] text-[#f4f5f7]">
+    <div className="min-h-screen bg-background text-foreground">
       <Input ref={inputRef} type="file" className="hidden" multiple onChange={handleImport} {...directoryInputProps} />
 
-      <header className="sticky top-0 z-20 border-b border-[#2b3037] bg-[#1a1d20]">
-        <div className="flex h-16 items-center justify-between px-5 md:px-8">
-          <Link to="/" className="flex items-center gap-3">
-            <div>
-              <div className="text-lg font-semibold leading-none">NamelessWatch</div>
-              <div className="mt-1 text-xs text-[#a8b0bd]">AI Roleplay Library</div>
-            </div>
+      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
+        <div className="flex h-16 items-center justify-between gap-4 px-4 md:px-8 lg:px-12">
+          <Link to="/" className="flex min-w-0 items-center gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Gamepad2 className="size-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-base font-semibold leading-none">NamelessWatch</span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">AI Roleplay Library</span>
+            </span>
           </Link>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+            <div className="relative hidden w-full max-w-sm sm:block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索游戏..."
+                aria-label="搜索游戏"
+                className="bg-muted/45 pl-9"
+              />
+            </div>
             <Button
               type="button"
-              className="h-10 rounded-lg bg-[#59677e] px-4 text-white hover:bg-[#6b7b94]"
               disabled={isImporting}
               onClick={() => inputRef.current?.click()}
             >
-              <FolderPlus className="size-4" />
+              <FolderPlus data-icon="inline-start" />
               {isImporting ? '导入中' : '添加游戏'}
             </Button>
-            <Button asChild variant="outline" size="icon-lg" className="rounded-lg border-[#343a43] bg-[#22262b] text-[#dce2ea] hover:bg-[#2d3239]">
-              <Link to="/settings" aria-label="设置">
-                <Settings className="size-5" />
-              </Link>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              aria-label="设置"
+              title="设置"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              <Settings data-icon />
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex h-[calc(100vh-64px)] w-full max-w-[1760px] flex-col px-5 py-8 md:px-12">
-        <section className="space-y-7">
-          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-            <div>
-              <h1 className="text-5xl font-bold tracking-normal text-white">游戏库</h1>
-              <p className="mt-3 text-xl text-[#9ea6b2]">共 {games.length} 个游戏</p>
+      <main className="mx-auto flex h-[calc(100vh-64px)] min-h-0 w-full max-w-[1760px] flex-col px-4 py-6 md:px-8 lg:px-12">
+        <section className="flex flex-col gap-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-4xl font-bold tracking-normal md:text-5xl">游戏库</h1>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>共 {games.length} 个游戏</span>
+                <Badge variant="secondary">{status}</Badge>
+              </div>
+            </div>
+
+            <div className="relative sm:hidden">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索游戏..."
+                aria-label="搜索游戏"
+                className="bg-muted/45 pl-9"
+              />
             </div>
           </div>
         </section>
 
-        <Separator className="my-7 bg-[#252a31]" />
+        <Separator className="my-5" />
 
-        <ScrollArea className="min-h-0 flex-1 pr-4">
+        <ScrollArea className="min-h-0 flex-1 pr-3">
           {games.length === 0 ? (
-            <Card className="grid min-h-[420px] place-items-center rounded-xl border-[#343a43] bg-[#171a1e] text-center text-[#f4f5f7]">
-              <CardContent className="max-w-md space-y-5 p-8">
-                <div>
-                  <CardTitle className="text-2xl text-white">暂无游戏</CardTitle>
-                  <CardDescription className="mt-3 text-sm leading-6 text-[#9ea6b2]">
-                    去添加一个游戏吧
+            <Card className="grid min-h-[420px] place-items-center border-dashed bg-card/70 text-center">
+              <CardContent className="flex max-w-md flex-col items-center gap-5 p-8">
+                <span className="grid size-14 place-items-center rounded-lg bg-muted text-muted-foreground">
+                  <Gamepad2 className="size-7" />
+                </span>
+                <div className="flex flex-col gap-2">
+                  <CardTitle className="text-2xl">暂无游戏</CardTitle>
+                  <CardDescription className="leading-6">
+                    添加一个剧情包后，游戏会以网格卡片展示在这里。
                   </CardDescription>
                 </div>
+                <Button type="button" onClick={() => inputRef.current?.click()}>
+                  <FolderPlus data-icon="inline-start" />
+                  添加游戏
+                </Button>
+              </CardContent>
+            </Card>
+          ) : visibleGames.length === 0 ? (
+            <Card className="grid min-h-[320px] place-items-center bg-card/70 text-center">
+              <CardContent className="flex max-w-md flex-col items-center gap-3 p-8">
+                <CardTitle className="text-xl">没有匹配的游戏</CardTitle>
+                <CardDescription>换一个关键词试试。</CardDescription>
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(188px,1fr))] gap-5 pb-8">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4 pb-10 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(196px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(212px,1fr))]">
               {visibleGames.map((game) => (
-                <Card key={game.id} className="group relative isolate overflow-hidden rounded-xl border-[#343a43] bg-[#1a1d20] p-0 text-[#f4f5f7] transition-colors hover:border-[#59677e]">
-                  <AspectRatio ratio={0.74} className="relative overflow-hidden bg-[#22262b]">
+                <Card
+                  key={game.id}
+                  size="sm"
+                  className="group relative isolate gap-0 overflow-hidden py-0 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl"
+                >
+                  <AspectRatio ratio={3 / 3.7} className="relative overflow-hidden bg-muted">
                     {game.photoUrls?.[0] ? (
-                      <img src={game.photoUrls[0]} alt="" className="block size-full origin-center object-cover transition-transform duration-300 ease-out will-change-transform group-hover:scale-105" />
+                      <img
+                        src={game.photoUrls[0]}
+                        alt={game.title}
+                        className="block size-full origin-center object-cover transition-transform duration-500 ease-out group-hover:scale-110"
+                        draggable={false}
+                      />
                     ) : (
-                      <div className="grid size-full place-items-center bg-[#23272d] text-[#596170]">
+                      <div className="grid size-full place-items-center text-muted-foreground">
                         <Gamepad2 className="size-12" />
                       </div>
                     )}
-                    <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#1a1d20] to-transparent" />
-                    <div className="absolute right-3 top-3 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+
+                    {continueByGame[game.id] ? (
+                      <Badge variant="secondary" className="absolute left-2 top-2 bg-background/85 backdrop-blur">
+                        可继续
+                      </Badge>
+                    ) : null}
+
+                    <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/55 opacity-0 backdrop-blur-[2px] transition-opacity duration-300 group-hover:opacity-100">
                       {continueByGame[game.id] ? (
                         <Button
                           type="button"
-                          size="icon"
-                          className="rounded-full bg-[#3f7d52] text-white shadow-lg hover:bg-[#4c9162]"
+                          size="icon-lg"
+                          variant="secondary"
                           aria-label={`继续 ${game.title}`}
                           title="继续游戏（读取上次进度）"
                           onClick={() => handleContinue(game.id)}
                         >
-                          <History className="size-4" />
+                          <History data-icon />
                         </Button>
                       ) : null}
-                      <Button asChild size="icon" className="rounded-full bg-[#59677e] text-white shadow-lg hover:bg-[#6b7b94]">
+                      <Button asChild size="icon-lg" aria-label={`开始 ${game.title}`} title={continueByGame[game.id] ? '重新开始（开新游戏）' : '开始游戏'}>
                         <Link
                           to="/play/$gameId"
                           params={{ gameId: game.id }}
-                          aria-label={`开始 ${game.title}`}
-                          title={continueByGame[game.id] ? '重新开始（开新游戏）' : '开始游戏'}
                           onClick={() => setPendingResumeSession(undefined)}
                         >
-                          <Play className="size-4 fill-current" />
+                          <Play data-icon />
                         </Link>
                       </Button>
+                      <Button
+                        type="button"
+                        size="icon-lg"
+                        variant="destructive"
+                        disabled={deletingGameId === game.id}
+                        aria-label={`删除 ${game.title}`}
+                        title="删除游戏"
+                        onClick={() => void handleDeleteGame(game.id, game.title)}
+                      >
+                        <Trash2 data-icon />
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="destructive"
-                      className="absolute left-3 top-3 rounded-full opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
-                      disabled={deletingGameId === game.id}
-                      aria-label={`删除 ${game.title}`}
-                      title="删除游戏"
-                      onClick={() => void handleDeleteGame(game.id, game.title)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
                   </AspectRatio>
 
-                  <CardHeader className="relative z-10 gap-1 bg-[#1a1d20] px-3 pb-3 pt-3">
-                    <CardTitle className="truncate text-lg font-bold text-white">{game.title}</CardTitle>
+                  <CardHeader className="gap-1 px-3 py-3">
+                    <CardTitle className="truncate text-base font-semibold" title={game.title}>
+                      {game.title}
+                    </CardTitle>
+                    <CardDescription className="truncate text-xs">
+                      {gameSubtitle(game)}
+                    </CardDescription>
                   </CardHeader>
                 </Card>
               ))}
@@ -275,8 +340,22 @@ export function HomePage() {
           )}
         </ScrollArea>
       </main>
+
+      <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </div>
   )
+}
+
+function gameSubtitle(game: roleplay.LibraryGame) {
+  const sceneCount = game.scenes?.length ?? 0
+  const bgmCount = game.bgms?.length ?? 0
+  if (sceneCount > 0 && bgmCount > 0) {
+    return `${sceneCount} 个场景 · ${bgmCount} 首 BGM`
+  }
+  if (sceneCount > 0) {
+    return `${sceneCount} 个场景`
+  }
+  return 'AI 文字冒险'
 }
 
 async function readStoryFolderFiles(fileList: FileList) {

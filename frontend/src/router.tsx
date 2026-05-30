@@ -2,11 +2,10 @@ import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/re
 
 import { HomePage } from '@/pages/HomePage'
 import { PlayPage } from '@/pages/PlayPage'
-import { SettingsPage } from '@/pages/SettingsPage'
 
 const rootRoute = createRootRoute({
   component: () => (
-    <main className="min-h-screen bg-[#10130f] text-foreground">
+    <main className="dark min-h-screen bg-background text-foreground">
       <Outlet />
     </main>
   ),
@@ -18,19 +17,13 @@ const indexRoute = createRoute({
   component: HomePage,
 })
 
-const settingsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/settings',
-  component: SettingsPage,
-})
-
 const playRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/play/$gameId',
   component: PlayPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, settingsRoute, playRoute])
+const routeTree = rootRoute.addChildren([indexRoute, playRoute])
 
 export const router = createRouter({ routeTree })
 
