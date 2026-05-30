@@ -27,15 +27,17 @@ var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md",
 const MetadataFileName = "metadata.json"
 
 type StoryPack struct {
-	ID     string            `json:"id"`
-	Files  map[string]string `json:"files"`
-	Scenes []SceneAsset      `json:"scenes,omitempty"`
+	ID      string            `json:"id"`
+	Files   map[string]string `json:"files"`
+	Scenes  []SceneAsset      `json:"scenes,omitempty"`
+	MapURLs []string          `json:"mapUrls,omitempty"`
 }
 
 type GameMetadata struct {
-	Title        string `json:"title"`
-	TTitle       string `json:"ttitle"`
-	InitialScene string `json:"initialScene"`
+	Title          string               `json:"title"`
+	TTitle         string               `json:"ttitle"`
+	InitialScene   string               `json:"initialScene"`
+	ScenePositions map[string][]float64 `json:"scenePositions"`
 }
 
 func (m GameMetadata) GameTitle() string {
@@ -113,10 +115,13 @@ type ChoiceOption struct {
 }
 
 type SceneAsset struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	FileName string `json:"fileName"`
-	URL      string `json:"url"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	FileName    string  `json:"fileName"`
+	URL         string  `json:"url"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	HasPosition bool    `json:"hasPosition"`
 }
 
 type SceneChange struct {
@@ -169,9 +174,10 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 	}
 
 	return StoryPack{
-		ID:     gameID,
-		Files:  normalized,
-		Scenes: orderScenesWithInitial(parseSceneAssets(normalized), parseInitialScene(normalized)),
+		ID:      gameID,
+		Files:   normalized,
+		Scenes:  orderScenesWithInitial(parseSceneAssets(normalized), parseInitialScene(normalized)),
+		MapURLs: parseMapURLs(normalized),
 	}, nil
 }
 
@@ -217,6 +223,7 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		ImportedAt: NowISO(),
 		Files:      normalized,
 		Scenes:     orderScenesWithInitial(parseSceneAssets(normalized), metadata.InitialScene),
+		MapURLs:    parseMapURLs(normalized),
 	}
 	for _, scene := range game.Scenes {
 		game.PhotoURLs = append(game.PhotoURLs, scene.URL)
@@ -429,6 +436,7 @@ func parseSceneAssets(files map[string]string) []SceneAsset {
 		return []SceneAsset{}
 	}
 
+	positions := loadGameMetadata(files).ScenePositions
 	scenes := make([]SceneAsset, 0, len(mapping))
 	for sceneID, fileName := range mapping {
 		id := strings.TrimSpace(sceneID)
@@ -443,29 +451,49 @@ func parseSceneAssets(files map[string]string) []SceneAsset {
 			continue
 		}
 
-		scenes = append(scenes, SceneAsset{
+		scene := SceneAsset{
 			ID:       id,
 			Name:     id,
 			FileName: assetName,
 			URL:      url,
-		})
+		}
+		if pos := positions[id]; len(pos) >= 2 {
+			scene.X = pos[0]
+			scene.Y = pos[1]
+			scene.HasPosition = true
+		}
+		scenes = append(scenes, scene)
 	}
 
 	return scenes
 }
 
+// parseMapURLs locates the optional map background image bundled with a story pack.
+func parseMapURLs(files map[string]string) []string {
+	for _, candidate := range []string{"photo/map.png", "map.png", "map/map.png"} {
+		if url := strings.TrimSpace(files[normalizeRelativePath(candidate)]); url != "" {
+			return []string{url}
+		}
+	}
+	return nil
+}
+
+// loadGameMetadata decodes metadata.json from the (normalized) pack files. It returns a
+// zero-value GameMetadata when the file is missing or cannot be parsed.
+func loadGameMetadata(files map[string]string) GameMetadata {
+	var metadata GameMetadata
+	raw, ok := files[strings.ToLower(MetadataFileName)]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return metadata
+	}
+	_ = json.Unmarshal([]byte(raw), &metadata)
+	return metadata
+}
+
 // parseInitialScene reads metadata.json's initialScene field, which declares the scene
 // the game should start in. Returns "" when absent or unparseable.
 func parseInitialScene(files map[string]string) string {
-	raw, ok := files[strings.ToLower(MetadataFileName)]
-	if !ok || strings.TrimSpace(raw) == "" {
-		return ""
-	}
-	var metadata GameMetadata
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(metadata.InitialScene)
+	return strings.TrimSpace(loadGameMetadata(files).InitialScene)
 }
 
 // orderScenesWithInitial returns scenes in a deterministic order: the scene whose ID

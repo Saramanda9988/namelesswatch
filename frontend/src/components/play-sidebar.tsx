@@ -14,9 +14,18 @@ export type PlaySidebarHistoryItem = {
   text: string
 }
 
+export type PlaySidebarSceneMarker = {
+  id: string
+  name: string
+  x: number
+  y: number
+  active: boolean
+}
+
 type PlaySidebarProps = {
   gameTitle: string
   mapImage?: string
+  sceneMarkers: PlaySidebarSceneMarker[]
   activeSceneLabel: string
   historyItems: PlaySidebarHistoryItem[]
   open: boolean
@@ -26,6 +35,7 @@ type PlaySidebarProps = {
 type SidebarContentProps = {
   gameTitle: string
   mapImage?: string
+  sceneMarkers: PlaySidebarSceneMarker[]
   activeSceneLabel: string
   historyItems: PlaySidebarHistoryItem[]
   showCloseButton?: boolean
@@ -35,6 +45,7 @@ type SidebarContentProps = {
 export function PlaySidebar({
   gameTitle,
   mapImage,
+  sceneMarkers,
   activeSceneLabel,
   historyItems,
   open,
@@ -76,6 +87,7 @@ export function PlaySidebar({
           <SidebarContent
             gameTitle={gameTitle}
             mapImage={mapImage}
+            sceneMarkers={sceneMarkers}
             activeSceneLabel={activeSceneLabel}
             historyItems={historyItems}
             showCloseButton
@@ -88,6 +100,7 @@ export function PlaySidebar({
         <SidebarContent
           gameTitle={gameTitle}
           mapImage={mapImage}
+          sceneMarkers={sceneMarkers}
           activeSceneLabel={activeSceneLabel}
           historyItems={historyItems}
         />
@@ -99,12 +112,14 @@ export function PlaySidebar({
 function SidebarContent({
   gameTitle,
   mapImage,
+  sceneMarkers,
   activeSceneLabel,
   historyItems,
   showCloseButton,
   onClose,
 }: SidebarContentProps) {
   const historyScrollRef = React.useRef<HTMLDivElement>(null)
+  const activeMarker = sceneMarkers.find((marker) => marker.active)
 
   React.useEffect(() => {
     const node = historyScrollRef.current
@@ -140,13 +155,32 @@ function SidebarContent({
           </div>
         </div>
 
-        <AspectRatio ratio={1.54} className="overflow-hidden rounded-md border bg-card">
-          {mapImage ? (
-            <img src={mapImage} alt="" className="size-full object-cover" />
-          ) : (
+        {mapImage ? (
+          <div className="relative overflow-hidden rounded-md border bg-card">
+            <img src={mapImage} alt="地图" className="block w-full select-none" draggable={false} />
+            {activeMarker ? (
+              <div
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background: `radial-gradient(circle at ${activeMarker.x}% ${activeMarker.y}%, rgba(0,0,0,0) 3%, rgba(0,0,0,0) 5%, rgba(0,0,0,0.62) 10%, rgba(0,0,0,0.88) 100%)`,
+                }}
+              />
+            ) : null}
+            {sceneMarkers.filter((marker) => marker.active).map((marker) => (
+              <div
+                key={marker.id}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${marker.x}%`, top: `${marker.y}%` }}
+              >
+                <span className="block size-3.5 rounded-full bg-primary ring-2 ring-primary/35" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <AspectRatio ratio={1.54} className="overflow-hidden rounded-md border bg-card">
             <MiniMapPlaceholder />
-          )}
-        </AspectRatio>
+          </AspectRatio>
+        )}
       </div>
 
       <Separator />

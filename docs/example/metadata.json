@@ -1,4 +1,11 @@
 {
     "title": "Example game",
-    "initialScene": "entrance"
+    "initialScene": "entrance",
+    "scenePositions": {
+        "entrance":    [85, 80],
+        "living_room": [40.0, 55.0],
+        "bedroom":     [12.5, 70],
+        "bathroom":    [12.5, 55],
+        "kitchen":     [80, 25.0]
+    }
 }

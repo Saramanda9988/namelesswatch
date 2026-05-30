@@ -18,7 +18,7 @@ import * as React from 'react'
 
 import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
 import { LogError, LogInfo } from '../../wailsjs/runtime/runtime'
-import { PlaySidebar, type PlaySidebarHistoryItem } from '@/components/play-sidebar'
+import { PlaySidebar, type PlaySidebarHistoryItem, type PlaySidebarSceneMarker } from '@/components/play-sidebar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -319,6 +319,17 @@ export function PlayPage() {
   }, [activeSceneId, game])
   const sceneImage = activeScene?.url || game?.photoUrls?.[0]
   const mapImage = game?.mapUrls?.[0]
+  const sceneMarkers = React.useMemo<PlaySidebarSceneMarker[]>(() => {
+    return (game?.scenes ?? [])
+      .filter((scene) => scene.hasPosition)
+      .map((scene) => ({
+        id: scene.id,
+        name: scene.name || scene.id,
+        x: scene.x,
+        y: scene.y,
+        active: scene.id === (activeScene?.id ?? activeSceneId),
+      }))
+  }, [game?.scenes, activeScene?.id, activeSceneId])
 
   React.useEffect(() => {
     if (!game) {
@@ -577,6 +588,7 @@ export function PlayPage() {
         <PlaySidebar
           gameTitle={game.title}
           mapImage={mapImage}
+          sceneMarkers={sceneMarkers}
           activeSceneLabel={activeScene?.name || activeSceneId || '未选择'}
           historyItems={historyItems}
           open={isSidebarOpen}

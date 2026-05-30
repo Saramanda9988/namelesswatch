@@ -355,7 +355,7 @@ func normalizeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, role
 			game.PhotoURLs = append(game.PhotoURLs, scene.URL)
 		}
 	}
-	game.MapURLs = append([]string{}, game.MapURLs...)
+	game.MapURLs = append([]string{}, pack.MapURLs...)
 	return game, pack, nil
 }
 

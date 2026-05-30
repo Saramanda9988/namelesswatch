@@ -251,6 +251,9 @@ export namespace roleplay {
 	    name: string;
 	    fileName: string;
 	    url: string;
+	    x: number;
+	    y: number;
+	    hasPosition: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SceneAsset(source);
@@ -262,6 +265,9 @@ export namespace roleplay {
 	        this.name = source["name"];
 	        this.fileName = source["fileName"];
 	        this.url = source["url"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.hasPosition = source["hasPosition"];
 	    }
 	}
 	export class LibraryGame {
