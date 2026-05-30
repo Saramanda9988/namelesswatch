@@ -1,6 +1,9 @@
 import * as React from 'react'
 
 const FAST_MS_PER_CHAR = 12
+const MIN_AUTO_ADVANCE_WAIT_MS = 900
+const MAX_AUTO_ADVANCE_WAIT_MS = 3000
+const AUTO_ADVANCE_MS_PER_CHAR = 24
 
 export type RevealPhase = 'typing' | 'waiting' | 'done'
 
@@ -37,6 +40,13 @@ function initialState(lines: string[]): RevealState {
   return { activeIndex: 0, charCount: 0, phase: 'typing' }
 }
 
+function autoAdvanceDelayForLine(line: string): number {
+  return Math.min(
+    MAX_AUTO_ADVANCE_WAIT_MS,
+    Math.max(MIN_AUTO_ADVANCE_WAIT_MS, line.length * AUTO_ADVANCE_MS_PER_CHAR),
+  )
+}
+
 export function useNarrativeReveal({ lines, resetKey, textSpeed, autoAdvance }: UseNarrativeRevealOptions): NarrativeReveal {
   const [state, setState] = React.useState<RevealState>(() => initialState(lines))
 
@@ -56,11 +66,11 @@ export function useNarrativeReveal({ lines, resetKey, textSpeed, autoAdvance }: 
 
       if (current.phase === 'typing') {
         const fullLength = currentLines[current.activeIndex]?.length ?? 0
-        const isLast = current.activeIndex >= currentLines.length - 1
         return {
           ...current,
           charCount: fullLength,
-          phase: isLast ? 'done' : 'waiting',
+          // Keep even the final line visible until a separate advance completes the turn.
+          phase: 'waiting',
         }
       }
 
@@ -83,12 +93,11 @@ export function useNarrativeReveal({ lines, resetKey, textSpeed, autoAdvance }: 
 
     const currentLine = lines[state.activeIndex] ?? ''
     if (state.charCount >= currentLine.length) {
-      const isLast = state.activeIndex >= lines.length - 1
       setState((current) => {
-        if (current.phase !== 'typing') {
+        if (current.phase !== 'typing' || current.activeIndex !== state.activeIndex) {
           return current
         }
-        return { ...current, phase: isLast ? 'done' : 'waiting' }
+        return { ...current, phase: 'waiting' }
       })
       return
     }
@@ -110,11 +119,12 @@ export function useNarrativeReveal({ lines, resetKey, textSpeed, autoAdvance }: 
     if (!autoAdvance || state.phase !== 'waiting') {
       return
     }
+    const currentLine = lines[state.activeIndex] ?? ''
     const timer = window.setTimeout(() => {
       advance()
-    }, 600)
+    }, autoAdvanceDelayForLine(currentLine))
     return () => window.clearTimeout(timer)
-  }, [autoAdvance, state.phase, state.activeIndex, advance])
+  }, [autoAdvance, state.phase, state.activeIndex, lines, advance])
 
   const revealedLines = React.useMemo(() => {
     if (lines.length === 0) {

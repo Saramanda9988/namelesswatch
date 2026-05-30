@@ -413,8 +413,16 @@ export function PlayPage() {
     ? choiceTool.prompt
     : revealedLines.at(-1) ?? ''
   const stageImage = showGameOver ? gameOverImage || sceneImage : sceneImage
+  const narrativeActionLabel = phase === 'typing' ? '显示完整台词' : '点击继续'
 
   const isBgmAudible = bgmEnabled && bgmVolume > 0
+
+  const handleNarrativeAdvance = React.useCallback(() => {
+    if (!canAdvance) {
+      return
+    }
+    advance()
+  }, [advance, canAdvance])
 
   function handleReplay() {
     resumeIdRef.current = undefined
@@ -457,14 +465,14 @@ export function PlayPage() {
       return
     }
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === ' ' || event.key === 'Enter') {
+      if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
         event.preventDefault()
-        advance()
+        handleNarrativeAdvance()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [canAdvance, advance])
+  }, [canAdvance, handleNarrativeAdvance])
 
   if (!game) {
     return (
@@ -598,10 +606,11 @@ export function PlayPage() {
               {!showBriefingPanel ? (
                 <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
                   <section
-                    role="button"
-                    tabIndex={canAdvance ? 0 : -1}
-                    aria-label="点击继续"
-                    onClick={canAdvance ? () => advance() : undefined}
+                    role={canAdvance ? 'button' : undefined}
+                    tabIndex={canAdvance ? 0 : undefined}
+                    aria-label={canAdvance ? narrativeActionLabel : undefined}
+                    title={canAdvance ? narrativeActionLabel : undefined}
+                    onClick={canAdvance ? handleNarrativeAdvance : undefined}
                     className={`mx-auto flex max-w-4xl flex-col gap-3 rounded-lg border bg-background/78 p-4 shadow-2xl backdrop-blur-md md:p-5 ${canAdvance ? 'cursor-pointer' : ''}`}
                   >
                     <div className="flex min-h-[112px] flex-col gap-3">
