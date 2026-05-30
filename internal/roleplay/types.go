@@ -33,8 +33,9 @@ type StoryPack struct {
 }
 
 type GameMetadata struct {
-	Title  string `json:"title"`
-	TTitle string `json:"ttitle"`
+	Title        string `json:"title"`
+	TTitle       string `json:"ttitle"`
+	InitialScene string `json:"initialScene"`
 }
 
 func (m GameMetadata) GameTitle() string {
@@ -170,7 +171,7 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 	return StoryPack{
 		ID:     gameID,
 		Files:  normalized,
-		Scenes: parseSceneAssets(normalized),
+		Scenes: orderScenesWithInitial(parseSceneAssets(normalized), parseInitialScene(normalized)),
 	}, nil
 }
 
@@ -215,7 +216,7 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		Title:      title,
 		ImportedAt: NowISO(),
 		Files:      normalized,
-		Scenes:     parseSceneAssets(normalized),
+		Scenes:     orderScenesWithInitial(parseSceneAssets(normalized), metadata.InitialScene),
 	}
 	for _, scene := range game.Scenes {
 		game.PhotoURLs = append(game.PhotoURLs, scene.URL)
@@ -451,4 +452,45 @@ func parseSceneAssets(files map[string]string) []SceneAsset {
 	}
 
 	return scenes
+}
+
+// parseInitialScene reads metadata.json's initialScene field, which declares the scene
+// the game should start in. Returns "" when absent or unparseable.
+func parseInitialScene(files map[string]string) string {
+	raw, ok := files[strings.ToLower(MetadataFileName)]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var metadata GameMetadata
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.InitialScene)
+}
+
+// orderScenesWithInitial returns scenes in a deterministic order: the scene whose ID
+// matches initialID (when present) comes first, the rest follow sorted by ID. This avoids
+// depending on Go's randomized map iteration so the starting scene is stable across runs.
+func orderScenesWithInitial(scenes []SceneAsset, initialID string) []SceneAsset {
+	if len(scenes) == 0 {
+		return scenes
+	}
+
+	ordered := make([]SceneAsset, len(scenes))
+	copy(ordered, scenes)
+	slices.SortFunc(ordered, func(a, b SceneAsset) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	initialID = strings.TrimSpace(initialID)
+	if initialID == "" {
+		return ordered
+	}
+	for i, scene := range ordered {
+		if scene.ID == initialID {
+			rest := append(ordered[:i:i], ordered[i+1:]...)
+			return append([]SceneAsset{scene}, rest...)
+		}
+	}
+	return ordered
 }

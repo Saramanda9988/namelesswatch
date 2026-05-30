@@ -1,3 +1,4 @@
 {
-    "title": "Example game"
+    "title": "Example game",
+    "initialScene": "entrance"
 }
