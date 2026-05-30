@@ -21,10 +21,15 @@ func NewApp() *App {
 		config = appconf.DefaultConfig()
 	}
 
+	gameService := service.NewGameService(config)
+	if err := gameService.LoadLibrary(); err != nil {
+		log.Printf("failed to load game library: %v", err)
+	}
+
 	return &App{
 		config:        config,
 		configService: service.NewConfigService(config),
-		gameService:   service.NewGameService(config),
+		gameService:   gameService,
 	}
 }
 
@@ -56,6 +61,22 @@ func (a *App) ImportGamePack(files map[string]string) (roleplay.ImportGameResult
 
 func (a *App) GetGames() ([]roleplay.LibraryGame, error) {
 	return a.gameService.GetGames()
+}
+
+func (a *App) GetGame(gameID string) (roleplay.LibraryGame, error) {
+	return a.gameService.GetGame(gameID)
+}
+
+func (a *App) CreateGame(game roleplay.LibraryGame) (roleplay.LibraryGame, error) {
+	return a.gameService.CreateGame(game)
+}
+
+func (a *App) UpdateGame(gameID string, game roleplay.LibraryGame) (roleplay.LibraryGame, error) {
+	return a.gameService.UpdateGame(gameID, game)
+}
+
+func (a *App) DeleteGame(gameID string) error {
+	return a.gameService.DeleteGame(gameID)
 }
 
 func (a *App) StartGame(gameID string) (roleplay.GameTurnResult, error) {

@@ -31,7 +31,15 @@ type StoryPack struct {
 }
 
 type GameMetadata struct {
+	Title  string `json:"title"`
 	TTitle string `json:"ttitle"`
+}
+
+func (m GameMetadata) GameTitle() string {
+	if title := strings.TrimSpace(m.Title); title != "" {
+		return title
+	}
+	return strings.TrimSpace(m.TTitle)
 }
 
 type LibraryGame struct {
@@ -171,10 +179,10 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		}, fmt.Errorf("parse metadata.json: %w", err)
 	}
 
-	title := strings.TrimSpace(metadata.TTitle)
+	title := metadata.GameTitle()
 	if title == "" {
 		return LibraryGame{}, ImportGameResult{
-			Missing:    []string{"metadata.json:ttitle"},
+			Missing:    []string{"metadata.json:title"},
 			Warnings:   []string{},
 			ValidFiles: validFiles,
 		}, nil

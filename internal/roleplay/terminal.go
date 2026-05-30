@@ -14,14 +14,22 @@ const terminalTimeout = 5 * time.Second
 const terminalOutputLimit = 6000
 
 func ExecuteTerminalRequest(session *GameSession, request AgentTerminalRequest) []TerminalExecution {
+	return ExecuteTerminalRequestWithLogger(session, request, nil)
+}
+
+func ExecuteTerminalRequestWithLogger(session *GameSession, request AgentTerminalRequest, logf TurnLogger) []TerminalExecution {
 	results := make([]TerminalExecution, 0, len(request.Commands))
 	for _, command := range request.Commands {
-		results = append(results, ExecuteTerminalCommand(session.WorkspacePath, command.Command))
+		results = append(results, ExecuteTerminalCommandWithLogger(session.WorkspacePath, command.Command, logf))
 	}
 	return results
 }
 
 func ExecuteTerminalCommand(workdir string, command string) TerminalExecution {
+	return ExecuteTerminalCommandWithLogger(workdir, command, nil)
+}
+
+func ExecuteTerminalCommandWithLogger(workdir string, command string, logf TurnLogger) TerminalExecution {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), terminalTimeout)
 	defer cancel()
@@ -61,6 +69,7 @@ func ExecuteTerminalCommand(workdir string, command string) TerminalExecution {
 	}
 
 	log.Printf("agent_terminal command=%q exit=%d duration=%s stdout=%q stderr=%q", result.Command, result.ExitCode, duration.String(), result.Stdout, result.Stderr)
+	logTurn(logf, "agent_terminal command=%q exit=%d timed_out=%t duration=%s stdout=%q stderr=%q", result.Command, result.ExitCode, result.TimedOut, duration.String(), truncateLogValue(result.Stdout, 2000), truncateLogValue(result.Stderr, 2000))
 	return result
 }
 

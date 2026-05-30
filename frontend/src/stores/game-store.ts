@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { GetAppConfig, GetGames, ImportGamePack, UpdateAppConfig } from '../../wailsjs/go/main/App'
+import { CreateGame, DeleteGame, GetAppConfig, GetGame, GetGames, ImportGamePack, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
 import type { appconf, roleplay } from '../../wailsjs/go/models'
 
 type GameSettings = {
@@ -18,6 +18,10 @@ type GameState = {
   config?: appconf.AppConfig
   draftConfig?: appconf.AppConfig
   fetchGames: () => Promise<void>
+  getGame: (gameId: string) => Promise<roleplay.LibraryGame>
+  createGame: (game: roleplay.LibraryGame) => Promise<roleplay.LibraryGame>
+  updateGame: (gameId: string, game: roleplay.LibraryGame) => Promise<roleplay.LibraryGame>
+  deleteGame: (gameId: string) => Promise<void>
   importGameFiles: (files: Record<string, string>) => Promise<roleplay.ImportGameResult>
   setActiveGame: (gameId: string) => void
   updateSettings: (settings: Partial<GameSettings>) => void
@@ -41,6 +45,29 @@ export const useGameStore = create<GameState>((set) => ({
   fetchGames: async () => {
     const games = await GetGames()
     set({ games })
+  },
+  getGame: (gameId) => GetGame(gameId),
+  createGame: async (game) => {
+    const createdGame = await CreateGame(game)
+    set((state) => ({
+      games: [createdGame, ...state.games.filter((item) => item.id !== createdGame.id)],
+      activeGameId: createdGame.id,
+    }))
+    return createdGame
+  },
+  updateGame: async (gameId, game) => {
+    const updatedGame = await UpdateGame(gameId, game)
+    set((state) => ({
+      games: state.games.map((item) => (item.id === gameId ? updatedGame : item)),
+    }))
+    return updatedGame
+  },
+  deleteGame: async (gameId) => {
+    await DeleteGame(gameId)
+    set((state) => ({
+      games: state.games.filter((game) => game.id !== gameId),
+      activeGameId: state.activeGameId === gameId ? undefined : state.activeGameId,
+    }))
   },
   importGameFiles: async (files) => {
     const result = await ImportGamePack(files)

@@ -97,10 +97,18 @@ func Normalize(config *AppConfig) {
 	config.AIToken = strings.TrimSpace(config.AIToken)
 }
 
-func getConfigPath() (string, error) {
+func GetConfigDir() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("get user config directory: %w", err)
 	}
-	return filepath.Join(configDir, "namelesswatch", "appconf.json"), nil
+	return filepath.Join(configDir, "namelesswatch"), nil
+}
+
+func getConfigPath() (string, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "appconf.json"), nil
 }

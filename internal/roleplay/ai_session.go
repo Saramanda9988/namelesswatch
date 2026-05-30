@@ -12,61 +12,94 @@ import (
 
 const maxTerminalRounds = 3
 
+type TurnLogger func(format string, args ...interface{})
+
 const gameHostInstructions = `你是一个规则怪谈的主持人，请遵守以下规则，和用户进行一次规则怪谈的游玩
 
-1. 故事的开头大纲在 @scene.md 中，故事结局在 endings.md 
-2. 必须遵守 @rule.md 中的规则，你的所有场景描写，对用户的引导，都必须遵守规则
-3. @ture.md 是故事的真相，不能让用户知晓，你自己用作逻辑推断即可
-4. @memory.md 是你的记事本，用户的前后操作的关联，可能走向的结局，可以记录在里面让你参考
+1. 故事的开头大纲在 scene.md 中，故事结局在 endings.md 
+2. 必须遵守 rule.md 中的规则，你的所有场景描写，对用户的引导，都必须遵守规则
+3. true.md 是故事的真相，不能让用户知晓，你自己用作逻辑推断即可
+4. memory.md 是你的记事本，用户的前后操作的关联，可能走向的结局，可以记录在里面让你参考
 5. 请按照描述故事的方法进行叙述，包含一定的场景描写，但是切记你在讲故事，对用户的称呼始终是你`
 
 func RunAITurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession) (GameTurnResult, error) {
+	return RunAITurnWithLogger(ctx, client, pack, session, nil)
+}
+
+func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, logf TurnLogger) (GameTurnResult, error) {
 	var terminalResults []TerminalExecution
 
 	for terminalRound := 0; terminalRound <= maxTerminalRounds; terminalRound++ {
+		logTurn(logf, "ai_turn start game=%s session=%s round=%d prior_turns=%d terminal_results=%d", pack.ID, session.ID, terminalRound, len(session.Turns), len(terminalResults))
 		content, err := client.Chat(ctx, BuildMessages(pack, session, terminalResults, ""))
 		if err != nil {
+			logTurn(logf, "ai_turn chat_error game=%s session=%s round=%d error=%v", pack.ID, session.ID, terminalRound, err)
 			return GameTurnResult{}, err
 		}
+		logTurn(logf, "ai_turn raw_response game=%s session=%s round=%d content=%s", pack.ID, session.ID, terminalRound, truncateLogValue(content, 2000))
 
 		response, terminalRequest, err := ParseAIResponse(content)
-		if err != nil || (response != nil && ValidateGameTurn(*response) != nil) {
+		if err != nil {
+			logTurn(logf, "ai_turn parse_error game=%s session=%s round=%d error=%v", pack.ID, session.ID, terminalRound, err)
+		}
+		if terminalRequest != nil {
+			logTurn(logf, "ai_turn terminal_request game=%s session=%s round=%d reason=%q commands=%d", pack.ID, session.ID, terminalRound, terminalRequest.Reason, len(terminalRequest.Commands))
+		}
+		validationErr := error(nil)
+		if response != nil {
+			validationErr = ValidateGameTurnForSession(*response, session)
+			if validationErr == nil {
+				logTurn(logf, "ai_turn parsed_game_turn game=%s session=%s round=%d state=%s payload_lines=%d tools=%d ending=%s", pack.ID, session.ID, terminalRound, response.State, len(response.Payload), len(response.Tools), endingTitle(response.Ending))
+			} else {
+				logTurn(logf, "ai_turn validation_error game=%s session=%s round=%d state=%s error=%v", pack.ID, session.ID, terminalRound, response.State, validationErr)
+			}
+		}
+		if err != nil || validationErr != nil {
 			validationErr := err
 			if validationErr == nil {
-				validationErr = ValidateGameTurn(*response)
+				validationErr = ValidateGameTurnForSession(*response, session)
 			}
-			repaired, repairErr := repairGameTurn(ctx, client, pack, session, terminalResults, content, validationErr)
+			repaired, repairErr := repairGameTurn(ctx, client, pack, session, terminalResults, content, validationErr, logf)
 			if repairErr == nil {
+				logTurn(logf, "ai_turn repaired game=%s session=%s state=%s payload_lines=%d tools=%d ending=%s", pack.ID, session.ID, repaired.State, len(repaired.Payload), len(repaired.Tools), endingTitle(repaired.Ending))
 				return appendAITurn(session, *repaired), nil
 			}
+			logTurn(logf, "ai_turn repair_failed game=%s session=%s error=%v fallback=true", pack.ID, session.ID, repairErr)
 			return appendAITurn(session, FallbackTurn()), nil
 		}
 
 		if terminalRequest != nil {
 			if terminalRound == maxTerminalRounds {
+				logTurn(logf, "ai_turn terminal_limit_reached game=%s session=%s max_rounds=%d fallback=true", pack.ID, session.ID, maxTerminalRounds)
 				return appendAITurn(session, FallbackTurn()), nil
 			}
-			terminalResults = append(terminalResults, ExecuteTerminalRequest(session, *terminalRequest)...)
+			terminalResults = append(terminalResults, ExecuteTerminalRequestWithLogger(session, *terminalRequest, logf)...)
 			continue
 		}
 
 		if response == nil {
+			logTurn(logf, "ai_turn empty_response game=%s session=%s fallback=true", pack.ID, session.ID)
 			return appendAITurn(session, FallbackTurn()), nil
 		}
+		logTurn(logf, "ai_turn append game=%s session=%s state=%s", pack.ID, session.ID, response.State)
 		return appendAITurn(session, *response), nil
 	}
 
+	logTurn(logf, "ai_turn exhausted game=%s session=%s fallback=true", pack.ID, session.ID)
 	return appendAITurn(session, FallbackTurn()), nil
 }
 
-func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, terminalResults []TerminalExecution, raw string, validationErr error) (*AITurnResponse, error) {
+func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, terminalResults []TerminalExecution, raw string, validationErr error, logf TurnLogger) (*AITurnResponse, error) {
 	repairInstruction := fmt.Sprintf("上一次模型响应不合规：%s\n原始响应：\n%s\n请只返回一个修正后的 game_turn JSON，不要返回 agent_terminal。", validationErr.Error(), raw)
 	content, err := client.Chat(ctx, BuildMessages(pack, session, terminalResults, repairInstruction))
 	if err != nil {
+		logTurn(logf, "ai_turn repair_chat_error game=%s session=%s error=%v", pack.ID, session.ID, err)
 		return nil, err
 	}
+	logTurn(logf, "ai_turn repair_raw_response game=%s session=%s content=%s", pack.ID, session.ID, truncateLogValue(content, 2000))
 	response, terminalRequest, err := ParseAIResponse(content)
 	if err != nil {
+		logTurn(logf, "ai_turn repair_parse_error game=%s session=%s error=%v", pack.ID, session.ID, err)
 		return nil, err
 	}
 	if terminalRequest != nil {
@@ -75,7 +108,7 @@ func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, s
 	if response == nil {
 		return nil, errors.New("repair response is empty")
 	}
-	if err := ValidateGameTurn(*response); err != nil {
+	if err := ValidateGameTurnForSession(*response, session); err != nil {
 		return nil, err
 	}
 	return response, nil
@@ -236,6 +269,16 @@ func ValidateGameTurn(response AITurnResponse) error {
 	return nil
 }
 
+func ValidateGameTurnForSession(response AITurnResponse, session *GameSession) error {
+	if err := ValidateGameTurn(response); err != nil {
+		return err
+	}
+	if session != nil && len(session.Turns) == 0 && response.State == "ended" {
+		return errors.New("first AI turn must continue and offer choices before any ending")
+	}
+	return nil
+}
+
 func ValidateTerminalRequest(request AgentTerminalRequest) error {
 	if request.Type != "agent_terminal" {
 		return errors.New("terminal request type must be agent_terminal")
@@ -307,4 +350,26 @@ func StoryFileContents(session *GameSession, fileName string) string {
 		return ""
 	}
 	return string(content)
+}
+
+func logTurn(logf TurnLogger, format string, args ...interface{}) {
+	if logf != nil {
+		logf(format, args...)
+	}
+}
+
+func endingTitle(ending *Ending) string {
+	if ending == nil {
+		return ""
+	}
+	return ending.Title
+}
+
+func truncateLogValue(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:limit]) + "\n[truncated]"
 }

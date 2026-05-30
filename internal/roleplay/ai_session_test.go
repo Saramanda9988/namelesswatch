@@ -58,7 +58,7 @@ func TestNewStoryPackRequiresStandardFiles(t *testing.T) {
 func TestNewLibraryGameRequiresMetadataTitle(t *testing.T) {
 	pack := loadExamplePack(t)
 	files := map[string]string{
-		"metadata.json": `{"ttitle":"示例规则怪谈"}`,
+		"metadata.json": `{"title":"示例规则怪谈"}`,
 	}
 	for name, content := range pack.Files {
 		files[name] = content
@@ -79,6 +79,24 @@ func TestNewLibraryGameRequiresMetadataTitle(t *testing.T) {
 	}
 	if !slices.Contains(report.Missing, "metadata.json") {
 		t.Fatalf("expected missing metadata.json, got %#v", report.Missing)
+	}
+}
+
+func TestNewLibraryGameSupportsLegacyTTitle(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json": `{"ttitle":"旧格式标题"}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil || game.Title != "旧格式标题" {
+		t.Fatalf("expected legacy metadata title, got game=%#v report=%#v", game, report)
 	}
 }
 
@@ -136,6 +154,34 @@ func TestRunAITurnRepairsInvalidResponse(t *testing.T) {
 	}
 	if result.Payload[0] != "你重新看向手表。" {
 		t.Fatalf("unexpected repaired payload: %#v", result.Payload)
+	}
+}
+
+func TestRunAITurnRepairsFirstTurnEnding(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	client := &fakeChatClient{
+		responses: []string{
+			`{"type":"game_turn","state":"ended","payload":["你直接进入了循环。"],"tools":[],"ending":{"id":"loop","title":"循环结局","kind":"loop"}}`,
+			`{"type":"game_turn","state":"continue","payload":["手表突然响了起来，你站在玄关前。"],"tools":[{"type":"choice","id":"main","options":[{"id":"check_watch","label":"查看手表"},{"id":"feed_dog","label":"先给狗喂食"}]}]}`,
+		},
+	}
+
+	result, err := RunAITurn(context.Background(), client, pack, session)
+	if err != nil {
+		t.Fatalf("run ai turn: %v", err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("expected repair retry call, got %d calls", client.calls)
+	}
+	if result.State == SessionStateEnded || result.Ending != nil {
+		t.Fatalf("first turn should not end, got %#v", result)
+	}
+	if len(result.Tools) != 1 {
+		t.Fatalf("expected choice tool after repair, got %#v", result.Tools)
 	}
 }
 

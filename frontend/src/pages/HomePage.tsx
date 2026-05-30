@@ -1,11 +1,11 @@
 import { Link } from '@tanstack/react-router'
-import { BookOpen, FolderPlus, Gamepad2, Play, Settings } from 'lucide-react'
+import { BookOpen, FolderPlus, Gamepad2, Play, Settings, Trash2 } from 'lucide-react'
 import * as React from 'react'
 
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -24,8 +24,10 @@ export function HomePage() {
   const games = useGameStore((state) => state.games)
   const fetchGames = useGameStore((state) => state.fetchGames)
   const importGameFiles = useGameStore((state) => state.importGameFiles)
+  const deleteGame = useGameStore((state) => state.deleteGame)
   const [status, setStatus] = React.useState('等待资源包')
   const [isImporting, setIsImporting] = React.useState(false)
+  const [deletingGameId, setDeletingGameId] = React.useState<string>()
   const [search, setSearch] = React.useState('')
 
   React.useEffect(() => {
@@ -68,6 +70,25 @@ export function HomePage() {
     finally {
       setIsImporting(false)
       event.currentTarget.value = ''
+    }
+  }
+
+  async function handleDeleteGame(gameId: string, title: string) {
+    const confirmed = window.confirm(`删除「${title}」？`)
+    if (!confirmed) {
+      return
+    }
+
+    setDeletingGameId(gameId)
+    try {
+      await deleteGame(gameId)
+      setStatus(`已删除：${title}`)
+    }
+    catch (cause) {
+      setStatus(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setDeletingGameId(undefined)
     }
   }
 
@@ -150,6 +171,17 @@ export function HomePage() {
                       <Link to="/play/$gameId" params={{ gameId: game.id }} aria-label={`开始 ${game.title}`}>
                         <Play className="size-4 fill-current" />
                       </Link>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="destructive"
+                      className="absolute left-3 top-3 rounded-full opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
+                      disabled={deletingGameId === game.id}
+                      aria-label={`删除 ${game.title}`}
+                      onClick={() => void handleDeleteGame(game.id, game.title)}
+                    >
+                      <Trash2 className="size-4" />
                     </Button>
                   </AspectRatio>
 
