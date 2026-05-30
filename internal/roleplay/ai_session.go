@@ -47,7 +47,7 @@ func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPa
 		}
 		validationErr := error(nil)
 		if response != nil {
-			validationErr = ValidateGameTurnForSession(*response, session)
+			validationErr = ValidateGameTurnForSession(*response, session, pack)
 			if validationErr == nil {
 				logTurn(logf, "ai_turn parsed_game_turn game=%s session=%s round=%d state=%s payload_lines=%d tools=%d ending=%s", pack.ID, session.ID, terminalRound, response.State, len(response.Payload), len(response.Tools), endingTitle(response.Ending))
 			} else {
@@ -57,7 +57,7 @@ func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPa
 		if err != nil || validationErr != nil {
 			validationErr := err
 			if validationErr == nil {
-				validationErr = ValidateGameTurnForSession(*response, session)
+				validationErr = ValidateGameTurnForSession(*response, session, pack)
 			}
 			repaired, repairErr := repairGameTurn(ctx, client, pack, session, terminalResults, content, validationErr, logf)
 			if repairErr == nil {
@@ -108,7 +108,7 @@ func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, s
 	if response == nil {
 		return nil, errors.New("repair response is empty")
 	}
-	if err := ValidateGameTurnForSession(*response, session); err != nil {
+	if err := ValidateGameTurnForSession(*response, session, pack); err != nil {
 		return nil, err
 	}
 	return response, nil
@@ -129,6 +129,20 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	}
 	builder.WriteString("\n--- current memory.md ---\n")
 	builder.WriteString(memory)
+	builder.WriteString("\n\nAvailable Scenes:\n")
+	if len(pack.Scenes) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, scene := range pack.Scenes {
+			builder.WriteString(fmt.Sprintf("- %s => %s\n", scene.ID, scene.FileName))
+		}
+	}
+	builder.WriteString("\nCurrent Scene:\n")
+	if session.CurrentSceneID == "" {
+		builder.WriteString("- none\n")
+	} else {
+		builder.WriteString("- " + session.CurrentSceneID + "\n")
+	}
 	builder.WriteString("\n\nRecent Turns:\n")
 	for _, turn := range recentTurns(session.Turns, 12) {
 		builder.WriteString(fmt.Sprintf("- %s: %s", turn.Role, strings.Join(turn.Payload, " / ")))
@@ -174,6 +188,7 @@ func BuildSystemPrompt() string {
 	builder.WriteString("payload 必须按句子分割：每个数组元素只放一个完整句子（以。！？等句末标点或换行为界），不要把多句话塞进同一个元素，也不要把一句话拆成多个元素。前端会逐句展示，所以分割粒度直接影响节奏。\n")
 	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
 	builder.WriteString("第一回合必须是开场叙事：从 scene.md 当前情境开始，不能假设用户已经行动，不能直接触发 endings.md 的任何结局。\n")
+	builder.WriteString("如果需要切换场景，只能切换到 Available Scenes 中列出的 scene id，并在 scene 字段里返回 {" + "\"id\":\"...\",\"reason\":\"...\"" + "}。\n")
 	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")
 	builder.WriteString("agent_terminal 不会展示给用户。不要依赖或输出本机绝对路径。\n\n")
 	builder.WriteString(`game_turn: {"type":"game_turn","state":"continue","payload":["..."],"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
@@ -194,6 +209,7 @@ type AITurnResponse struct {
 	State   string       `json:"state"`
 	Payload []string     `json:"payload"`
 	Tools   []ChoiceTool `json:"tools"`
+	Scene   *SceneChange `json:"scene,omitempty"`
 	Ending  *Ending      `json:"ending,omitempty"`
 }
 
@@ -275,14 +291,28 @@ func ValidateGameTurn(response AITurnResponse) error {
 	return nil
 }
 
-func ValidateGameTurnForSession(response AITurnResponse, session *GameSession) error {
+func ValidateGameTurnForSession(response AITurnResponse, session *GameSession, pack StoryPack) error {
 	if err := ValidateGameTurn(response); err != nil {
 		return err
 	}
 	if session != nil && len(session.Turns) == 0 && response.State == "ended" {
 		return errors.New("first AI turn must continue and offer choices before any ending")
 	}
+	if response.Scene != nil {
+		if !sceneExists(pack.Scenes, response.Scene.ID) {
+			return fmt.Errorf("scene %q is not available", response.Scene.ID)
+		}
+	}
 	return nil
+}
+
+func sceneExists(scenes []SceneAsset, sceneID string) bool {
+	for _, scene := range scenes {
+		if scene.ID == sceneID {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateTerminalRequest(request AgentTerminalRequest) error {
@@ -331,10 +361,14 @@ func appendAITurn(session *GameSession, response AITurnResponse) GameTurnResult 
 		Role:      TurnRoleAI,
 		Payload:   response.Payload,
 		Tools:     tools,
+		Scene:     response.Scene,
 		Ending:    response.Ending,
 		CreatedAt: NowISO(),
 	}
 	session.AppendTurn(turn)
+	if response.Scene != nil {
+		session.CurrentSceneID = response.Scene.ID
+	}
 	if response.State == "ended" {
 		session.State = SessionStateEnded
 	}
@@ -345,6 +379,7 @@ func appendAITurn(session *GameSession, response AITurnResponse) GameTurnResult 
 		State:     session.State,
 		Payload:   response.Payload,
 		Tools:     tools,
+		Scene:     response.Scene,
 		Ending:    response.Ending,
 		Turn:      turn,
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,8 +27,9 @@ var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md",
 const MetadataFileName = "metadata.json"
 
 type StoryPack struct {
-	ID    string            `json:"id"`
-	Files map[string]string `json:"files"`
+	ID     string            `json:"id"`
+	Files  map[string]string `json:"files"`
+	Scenes []SceneAsset      `json:"scenes,omitempty"`
 }
 
 type GameMetadata struct {
@@ -49,6 +51,7 @@ type LibraryGame struct {
 	Files      map[string]string `json:"files"`
 	PhotoURLs  []string          `json:"photoUrls"`
 	MapURLs    []string          `json:"mapUrls"`
+	Scenes     []SceneAsset      `json:"scenes,omitempty"`
 }
 
 type ImportGameResult struct {
@@ -59,17 +62,18 @@ type ImportGameResult struct {
 }
 
 type GameSession struct {
-	ID            string     `json:"id"`
-	GameID        string     `json:"gameId"`
-	State         string     `json:"state"`
-	WorkspacePath string     `json:"workspacePath"`
-	MemoryPath    string     `json:"memoryPath"`
-	Turns         []GameTurn `json:"turns"`
-	Label         string     `json:"label,omitempty"`
-	IsSnapshot    bool       `json:"isSnapshot,omitempty"`
-	ParentID      string     `json:"parentId,omitempty"`
-	CreatedAt     string     `json:"createdAt"`
-	UpdatedAt     string     `json:"updatedAt"`
+	ID             string     `json:"id"`
+	GameID         string     `json:"gameId"`
+	State          string     `json:"state"`
+	CurrentSceneID string     `json:"currentSceneId,omitempty"`
+	WorkspacePath  string     `json:"workspacePath"`
+	MemoryPath     string     `json:"memoryPath"`
+	Turns          []GameTurn `json:"turns"`
+	Label          string     `json:"label,omitempty"`
+	IsSnapshot     bool       `json:"isSnapshot,omitempty"`
+	ParentID       string     `json:"parentId,omitempty"`
+	CreatedAt      string     `json:"createdAt"`
+	UpdatedAt      string     `json:"updatedAt"`
 }
 
 type GameTurn struct {
@@ -79,6 +83,7 @@ type GameTurn struct {
 	SelectedChoiceID    string       `json:"selectedChoiceId,omitempty"`
 	SelectedChoiceLabel string       `json:"selectedChoiceLabel,omitempty"`
 	Tools               []ChoiceTool `json:"tools,omitempty"`
+	Scene               *SceneChange `json:"scene,omitempty"`
 	Ending              *Ending      `json:"ending,omitempty"`
 	CreatedAt           string       `json:"createdAt"`
 }
@@ -89,6 +94,7 @@ type GameTurnResult struct {
 	State     string       `json:"state"`
 	Payload   []string     `json:"payload"`
 	Tools     []ChoiceTool `json:"tools"`
+	Scene     *SceneChange `json:"scene,omitempty"`
 	Ending    *Ending      `json:"ending,omitempty"`
 	Turn      GameTurn     `json:"turn"`
 }
@@ -103,6 +109,18 @@ type ChoiceTool struct {
 type ChoiceOption struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+}
+
+type SceneAsset struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	FileName string `json:"fileName"`
+	URL      string `json:"url"`
+}
+
+type SceneChange struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type Ending struct {
@@ -136,12 +154,12 @@ type TerminalExecution struct {
 func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 	normalized := make(map[string]string, len(files))
 	for name, content := range files {
-		normalized[strings.ToLower(filepath.Base(strings.ReplaceAll(name, "\\", "/")))] = content
+		normalized[normalizeRelativePath(name)] = content
 	}
 
 	var missing []string
 	for _, fileName := range RequiredStoryFiles {
-		if _, ok := normalized[fileName]; !ok {
+		if _, ok := normalized[strings.ToLower(fileName)]; !ok {
 			missing = append(missing, fileName)
 		}
 	}
@@ -150,8 +168,9 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 	}
 
 	return StoryPack{
-		ID:    gameID,
-		Files: normalized,
+		ID:     gameID,
+		Files:  normalized,
+		Scenes: parseSceneAssets(normalized),
 	}, nil
 }
 
@@ -159,7 +178,7 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 	normalized := normalizeFileContents(files)
 	validFiles := make([]string, 0, len(RequiredStoryFiles)+1)
 	for _, fileName := range append([]string{MetadataFileName}, RequiredStoryFiles...) {
-		if _, ok := normalized[fileName]; ok {
+		if _, ok := normalized[strings.ToLower(fileName)]; ok {
 			validFiles = append(validFiles, fileName)
 		}
 	}
@@ -174,7 +193,7 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 	}
 
 	var metadata GameMetadata
-	if err := json.Unmarshal([]byte(normalized[MetadataFileName]), &metadata); err != nil {
+	if err := json.Unmarshal([]byte(normalized[strings.ToLower(MetadataFileName)]), &metadata); err != nil {
 		return LibraryGame{}, ImportGameResult{
 			Missing:    []string{},
 			Warnings:   []string{"metadata.json 解析失败"},
@@ -196,8 +215,10 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		Title:      title,
 		ImportedAt: NowISO(),
 		Files:      normalized,
-		PhotoURLs:  []string{},
-		MapURLs:    []string{},
+		Scenes:     parseSceneAssets(normalized),
+	}
+	for _, scene := range game.Scenes {
+		game.PhotoURLs = append(game.PhotoURLs, scene.URL)
 	}
 
 	return game, ImportGameResult{
@@ -211,18 +232,18 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 func normalizeFileContents(files map[string]string) map[string]string {
 	normalized := make(map[string]string, len(files))
 	for name, content := range files {
-		normalized[strings.ToLower(filepath.Base(strings.ReplaceAll(name, "\\", "/")))] = content
+		normalized[normalizeRelativePath(name)] = content
 	}
 	return normalized
 }
 
 func requiredImportFilesMissing(files map[string]string) []string {
 	var missing []string
-	if _, ok := files[MetadataFileName]; !ok {
+	if _, ok := files[strings.ToLower(MetadataFileName)]; !ok {
 		missing = append(missing, MetadataFileName)
 	}
 	for _, fileName := range RequiredStoryFiles {
-		if _, ok := files[fileName]; !ok {
+		if _, ok := files[strings.ToLower(fileName)]; !ok {
 			missing = append(missing, fileName)
 		}
 	}
@@ -238,11 +259,11 @@ func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {
 }
 
 // NewGameSessionInDir creates a session whose workspace lives under a persistent
-// base directory (baseDir/{sessionID}/workspace) instead of the system temp dir,
+// base directory (baseDir/{gameID}/{sessionID}) instead of the system temp dir,
 // so the session and its memory.md survive process restarts.
 func NewGameSessionInDir(gameID string, pack StoryPack, baseDir string) (*GameSession, error) {
 	sessionID := NewID("session")
-	workspace := filepath.Join(baseDir, sessionID, "workspace")
+	workspace := filepath.Join(baseDir, safePathSegment(gameID), sessionID)
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return nil, fmt.Errorf("create session workspace: %w", err)
 	}
@@ -251,21 +272,26 @@ func NewGameSessionInDir(gameID string, pack StoryPack, baseDir string) (*GameSe
 
 func newGameSessionWithWorkspace(sessionID, gameID string, pack StoryPack, workspace string) (*GameSession, error) {
 	for _, fileName := range RequiredStoryFiles {
-		if err := os.WriteFile(filepath.Join(workspace, fileName), []byte(pack.Files[fileName]), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(workspace, fileName), []byte(pack.Files[strings.ToLower(fileName)]), 0o600); err != nil {
 			return nil, fmt.Errorf("copy %s to session workspace: %w", fileName, err)
 		}
 	}
 
 	now := NowISO()
+	currentSceneID := ""
+	if len(pack.Scenes) > 0 {
+		currentSceneID = pack.Scenes[0].ID
+	}
 	return &GameSession{
-		ID:            sessionID,
-		GameID:        gameID,
-		State:         SessionStatePlaying,
-		WorkspacePath: workspace,
-		MemoryPath:    filepath.Join(workspace, "memory.md"),
-		Turns:         []GameTurn{},
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:             sessionID,
+		GameID:         gameID,
+		State:          SessionStatePlaying,
+		CurrentSceneID: currentSceneID,
+		WorkspacePath:  workspace,
+		MemoryPath:     filepath.Join(workspace, "memory.md"),
+		Turns:          []GameTurn{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}, nil
 }
 
@@ -298,17 +324,18 @@ func (s *GameSession) ChoiceLabel(choiceID string) string {
 func (s *GameSession) Clone() GameSession {
 	turns := slices.Clone(s.Turns)
 	return GameSession{
-		ID:            s.ID,
-		GameID:        s.GameID,
-		State:         s.State,
-		WorkspacePath: s.WorkspacePath,
-		MemoryPath:    s.MemoryPath,
-		Turns:         turns,
-		Label:         s.Label,
-		IsSnapshot:    s.IsSnapshot,
-		ParentID:      s.ParentID,
-		CreatedAt:     s.CreatedAt,
-		UpdatedAt:     s.UpdatedAt,
+		ID:             s.ID,
+		GameID:         s.GameID,
+		State:          s.State,
+		CurrentSceneID: s.CurrentSceneID,
+		WorkspacePath:  s.WorkspacePath,
+		MemoryPath:     s.MemoryPath,
+		Turns:          turns,
+		Label:          s.Label,
+		IsSnapshot:     s.IsSnapshot,
+		ParentID:       s.ParentID,
+		CreatedAt:      s.CreatedAt,
+		UpdatedAt:      s.UpdatedAt,
 	}
 }
 
@@ -327,6 +354,7 @@ func ResultFromSession(session *GameSession) GameTurnResult {
 		State:     session.State,
 		Payload:   last.Payload,
 		Tools:     last.Tools,
+		Scene:     last.Scene,
 		Ending:    last.Ending,
 		Turn:      last,
 	}
@@ -353,4 +381,74 @@ func ReadWorkspaceFile(session *GameSession, fileName string) (string, error) {
 		return "", err
 	}
 	return string(content), nil
+}
+
+func normalizeRelativePath(name string) string {
+	value := strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	value = strings.TrimPrefix(value, "./")
+	value = strings.TrimPrefix(value, "/")
+	value = path.Clean(value)
+	value = strings.TrimPrefix(value, "./")
+	value = strings.TrimPrefix(value, "/")
+	return strings.ToLower(value)
+}
+
+func safePathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		"\"", "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+	)
+	value = replacer.Replace(value)
+	if value == "." || value == ".." {
+		return "unknown"
+	}
+	return value
+}
+
+func parseSceneAssets(files map[string]string) []SceneAsset {
+	metadataKey := normalizeRelativePath("photo/metadata.json")
+	metadataRaw, ok := files[metadataKey]
+	if !ok || strings.TrimSpace(metadataRaw) == "" {
+		return []SceneAsset{}
+	}
+
+	var mapping map[string]string
+	if err := json.Unmarshal([]byte(metadataRaw), &mapping); err != nil {
+		return []SceneAsset{}
+	}
+
+	scenes := make([]SceneAsset, 0, len(mapping))
+	for sceneID, fileName := range mapping {
+		id := strings.TrimSpace(sceneID)
+		assetName := strings.TrimSpace(fileName)
+		if id == "" || assetName == "" {
+			continue
+		}
+
+		assetKey := normalizeRelativePath(filepath.Join("photo", assetName))
+		url := files[assetKey]
+		if strings.TrimSpace(url) == "" {
+			continue
+		}
+
+		scenes = append(scenes, SceneAsset{
+			ID:       id,
+			Name:     id,
+			FileName: assetName,
+			URL:      url,
+		})
+	}
+
+	return scenes
 }

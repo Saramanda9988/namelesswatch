@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/game-store'
+import { LogInfo } from '../../wailsjs/runtime/runtime'
 
 const directoryInputProps = {
   directory: '',
@@ -17,6 +18,15 @@ const directoryInputProps = {
 } as React.InputHTMLAttributes<HTMLInputElement> & {
   directory: string
   webkitdirectory: string
+}
+
+function logRuntimeInfo(message: string) {
+  try {
+    LogInfo(message)
+  }
+  catch {
+    console.info(message)
+  }
 }
 
 export function HomePage() {
@@ -108,7 +118,10 @@ export function HomePage() {
     setIsImporting(true)
     try {
       const fileContents = await readStoryFolderFiles(selectedFiles)
+      const keys = Object.keys(fileContents)
+      logRuntimeInfo(`[import] prepared files count=${keys.length} keys=${summarizeKeys(keys)}`)
       const report = await importGameFiles(fileContents)
+      logRuntimeInfo(`[import] result game=${report.game?.id ?? ''} title=${report.game?.title ?? ''} scenes=${report.game?.scenes?.length ?? 0} photos=${report.game?.photoUrls?.length ?? 0} missing=${report.missing.join('|')}`)
 
       if (!report.game) {
         setStatus(`缺少文件：${report.missing.join('、')}；已识别：${report.validFiles.join('、') || '无'}`)
@@ -277,17 +290,69 @@ export function HomePage() {
 
 async function readStoryFolderFiles(fileList: FileList) {
   const selectedFiles = Array.from(fileList)
-  const textFiles = selectedFiles.filter((file) => {
-    const name = fileNameOf(file).toLowerCase()
-    return name === 'metadata.json' || name.endsWith('.md')
-  })
+  const relevantFiles = selectedFiles.filter((file) => isImportableStoryFile(file))
+  const relativePaths = stripCommonRoot(relevantFiles.map(filePathOf))
 
   const entries = await Promise.all(
-    textFiles.map(async (file) => [fileNameOf(file).toLowerCase(), await file.text()] as const),
+    relevantFiles.map(async (file, index) => {
+      const key = relativePaths[index].toLowerCase()
+      const content = await readFileContent(file)
+      return [key, content] as const
+    }),
   )
   return Object.fromEntries(entries)
 }
 
-function fileNameOf(file: File) {
-  return (file.webkitRelativePath || file.name).replaceAll('\\', '/').split('/').at(-1) || file.name
+function isImportableStoryFile(file: File) {
+  const name = filePathOf(file).toLowerCase()
+  return (
+    name.endsWith('.md')
+    || name.endsWith('.json')
+    || name.endsWith('.png')
+    || name.endsWith('.jpg')
+    || name.endsWith('.jpeg')
+    || name.endsWith('.webp')
+    || name.endsWith('.gif')
+  )
+}
+
+function filePathOf(file: File) {
+  return (file.webkitRelativePath || file.name).replaceAll('\\', '/')
+}
+
+function stripCommonRoot(paths: string[]) {
+  if (paths.length === 0) {
+    return paths
+  }
+
+  const segments = paths.map((item) => item.split('/').filter(Boolean))
+  const firstSegment = segments[0]?.[0]
+  if (!firstSegment || segments.some((item) => item.length < 2 || item[0] !== firstSegment)) {
+    return paths
+  }
+
+  return segments.map((item) => item.slice(1).join('/'))
+}
+
+function summarizeKeys(keys: string[]) {
+  const sorted = [...keys].sort()
+  const photoKeys = sorted.filter((key) => key.startsWith('photo/'))
+  const visible = [...sorted.filter((key) => !key.startsWith('photo/')).slice(0, 8), ...photoKeys.slice(0, 8)]
+  const suffix = sorted.length > visible.length ? ` ...(+${sorted.length - visible.length})` : ''
+  return `${visible.join(',')}${suffix}`
+}
+
+async function readFileContent(file: File) {
+  const lowerName = file.name.toLowerCase()
+  const isText = lowerName.endsWith('.md') || lowerName.endsWith('.json')
+  if (isText) {
+    return file.text()
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('read file failed'))
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.readAsDataURL(file)
+  })
 }

@@ -100,6 +100,52 @@ func TestNewLibraryGameSupportsLegacyTTitle(t *testing.T) {
 	}
 }
 
+func TestNewLibraryGameParsesPhotoScenes(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json":       `{"title":"带场景的规则怪谈"}`,
+		"photo/metadata.json": `{"living_room":"客厅背景.png","kitchen":"厨房背景.png"}`,
+		"photo/客厅背景.png":      "data:image/png;base64,AAA",
+		"photo/厨房背景.png":      "data:image/png;base64,BBB",
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil {
+		t.Fatalf("expected imported game, got report=%#v", report)
+	}
+	if len(game.Scenes) != 2 {
+		t.Fatalf("expected 2 scenes, got %#v", game.Scenes)
+	}
+	if game.Scenes[0].ID == "" || game.Scenes[0].URL == "" {
+		t.Fatalf("expected populated scene asset, got %#v", game.Scenes[0])
+	}
+	if len(game.PhotoURLs) != 2 {
+		t.Fatalf("expected 2 photo urls, got %#v", game.PhotoURLs)
+	}
+}
+
+func TestNewGameSessionInDirUsesGameAndSessionPath(t *testing.T) {
+	pack := loadExamplePack(t)
+	dir := t.TempDir()
+
+	session, err := NewGameSessionInDir("demo-game", pack, dir)
+	if err != nil {
+		t.Fatalf("new game session in dir: %v", err)
+	}
+	if !strings.Contains(session.WorkspacePath, filepath.Join("demo-game", session.ID)) {
+		t.Fatalf("unexpected workspace path: %s", session.WorkspacePath)
+	}
+	if session.CurrentSceneID == "" && len(pack.Scenes) > 0 {
+		t.Fatal("expected current scene id to default from pack")
+	}
+}
+
 func TestGameTurnValidationAndFallback(t *testing.T) {
 	valid := AITurnResponse{
 		Type:    "game_turn",

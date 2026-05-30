@@ -89,6 +89,20 @@ export namespace roleplay {
 	        this.kind = source["kind"];
 	    }
 	}
+	export class SceneChange {
+	    id: string;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SceneChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.reason = source["reason"];
+	    }
+	}
 	export class GameTurn {
 	    id: string;
 	    role: string;
@@ -96,6 +110,7 @@ export namespace roleplay {
 	    selectedChoiceId?: string;
 	    selectedChoiceLabel?: string;
 	    tools?: ChoiceTool[];
+	    scene?: SceneChange;
 	    ending?: Ending;
 	    createdAt: string;
 	
@@ -111,6 +126,7 @@ export namespace roleplay {
 	        this.selectedChoiceId = source["selectedChoiceId"];
 	        this.selectedChoiceLabel = source["selectedChoiceLabel"];
 	        this.tools = this.convertValues(source["tools"], ChoiceTool);
+	        this.scene = this.convertValues(source["scene"], SceneChange);
 	        this.ending = this.convertValues(source["ending"], Ending);
 	        this.createdAt = source["createdAt"];
 	    }
@@ -137,6 +153,7 @@ export namespace roleplay {
 	    id: string;
 	    gameId: string;
 	    state: string;
+	    currentSceneId?: string;
 	    workspacePath: string;
 	    memoryPath: string;
 	    turns: GameTurn[];
@@ -155,6 +172,7 @@ export namespace roleplay {
 	        this.id = source["id"];
 	        this.gameId = source["gameId"];
 	        this.state = source["state"];
+	        this.currentSceneId = source["currentSceneId"];
 	        this.workspacePath = source["workspacePath"];
 	        this.memoryPath = source["memoryPath"];
 	        this.turns = this.convertValues(source["turns"], GameTurn);
@@ -190,6 +208,7 @@ export namespace roleplay {
 	    state: string;
 	    payload: string[];
 	    tools: ChoiceTool[];
+	    scene?: SceneChange;
 	    ending?: Ending;
 	    turn: GameTurn;
 	
@@ -204,6 +223,7 @@ export namespace roleplay {
 	        this.state = source["state"];
 	        this.payload = source["payload"];
 	        this.tools = this.convertValues(source["tools"], ChoiceTool);
+	        this.scene = this.convertValues(source["scene"], SceneChange);
 	        this.ending = this.convertValues(source["ending"], Ending);
 	        this.turn = this.convertValues(source["turn"], GameTurn);
 	    }
@@ -226,6 +246,24 @@ export namespace roleplay {
 		    return a;
 		}
 	}
+	export class SceneAsset {
+	    id: string;
+	    name: string;
+	    fileName: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SceneAsset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.fileName = source["fileName"];
+	        this.url = source["url"];
+	    }
+	}
 	export class LibraryGame {
 	    id: string;
 	    title: string;
@@ -233,6 +271,7 @@ export namespace roleplay {
 	    files: Record<string, string>;
 	    photoUrls: string[];
 	    mapUrls: string[];
+	    scenes?: SceneAsset[];
 	
 	    static createFrom(source: any = {}) {
 	        return new LibraryGame(source);
@@ -246,7 +285,26 @@ export namespace roleplay {
 	        this.files = source["files"];
 	        this.photoUrls = source["photoUrls"];
 	        this.mapUrls = source["mapUrls"];
+	        this.scenes = this.convertValues(source["scenes"], SceneAsset);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ImportGameResult {
 	    game?: LibraryGame;
@@ -284,6 +342,8 @@ export namespace roleplay {
 		    return a;
 		}
 	}
+	
+	
 
 }
 

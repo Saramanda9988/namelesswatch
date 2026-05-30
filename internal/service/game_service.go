@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"namelesswatch/internal/appconf"
 	"namelesswatch/internal/roleplay"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 
@@ -69,8 +71,9 @@ func (s *GameService) LoadLibrary() error {
 	nextGames := make(map[string]roleplay.LibraryGame, len(games))
 	nextPacks := make(map[string]roleplay.StoryPack, len(games))
 	nextGameIDs := make([]string, 0, len(games))
+	libraryChanged := false
 	for _, game := range games {
-		normalized, pack, err := normalizeLibraryGame(game)
+		normalized, pack, err := normalizeAndMaterializeLibraryGame(game)
 		if err != nil {
 			return fmt.Errorf("load game %q: %w", game.ID, err)
 		}
@@ -80,6 +83,19 @@ func (s *GameService) LoadLibrary() error {
 		nextGames[normalized.ID] = normalized
 		nextPacks[normalized.ID] = pack
 		nextGameIDs = append(nextGameIDs, normalized.ID)
+		if !reflect.DeepEqual(game, normalized) {
+			libraryChanged = true
+		}
+	}
+
+	if libraryChanged {
+		orderedGames := make([]roleplay.LibraryGame, 0, len(nextGameIDs))
+		for _, gameID := range nextGameIDs {
+			orderedGames = append(orderedGames, nextGames[gameID])
+		}
+		if err := repo.save(orderedGames); err != nil {
+			return err
+		}
 	}
 
 	sessionRepo, err := newSessionRepository()
@@ -116,6 +132,7 @@ func (s *GameService) RegisterGamePack(gameID string, files map[string]string) e
 		s.logErrorf("register_game_pack failed game=%s error=%v", gameID, err)
 		return err
 	}
+	s.logInfof("register_game_pack parsed game=%s scenes=%d photo_keys=%s scene_urls=%s", gameID, len(pack.Scenes), summarizeKeysWithPrefix(pack.Files, "photo/"), summarizeSceneURLs(pack.Scenes))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,12 +151,15 @@ func (s *GameService) ImportGamePack(files map[string]string) (roleplay.ImportGa
 		s.logWarningf("import_game_pack incomplete missing=%v valid=%v warnings=%v", result.Missing, result.ValidFiles, result.Warnings)
 		return result, nil
 	}
+	s.logInfof("import_game_pack raw game=%s title=%q file_keys=%s photo_keys=%s", game.ID, game.Title, summarizeKeysWithPrefix(game.Files, ""), summarizeKeysWithPrefix(game.Files, "photo/"))
 
-	pack, err := roleplay.NewStoryPack(game.ID, game.Files)
+	game, pack, err := normalizeAndMaterializeLibraryGame(game)
 	if err != nil {
-		s.logErrorf("import_game_pack story_pack_failed game=%s error=%v", game.ID, err)
+		s.logErrorf("import_game_pack prepare_failed game=%s error=%v", game.ID, err)
 		return roleplay.ImportGameResult{}, err
 	}
+	result.Game = &game
+	s.logInfof("import_game_pack prepared game=%s scenes=%d photo_urls=%d scene_urls=%s", game.ID, len(game.Scenes), len(game.PhotoURLs), summarizeSceneURLs(pack.Scenes))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,7 +200,7 @@ func (s *GameService) GetGame(gameID string) (roleplay.LibraryGame, error) {
 }
 
 func (s *GameService) CreateGame(game roleplay.LibraryGame) (roleplay.LibraryGame, error) {
-	normalized, pack, err := normalizeLibraryGame(game)
+	normalized, pack, err := normalizeAndMaterializeLibraryGame(game)
 	if err != nil {
 		return roleplay.LibraryGame{}, err
 	}
@@ -204,7 +224,7 @@ func (s *GameService) UpdateGame(gameID string, game roleplay.LibraryGame) (role
 		return roleplay.LibraryGame{}, errors.New("game id is required")
 	}
 	game.ID = gameID
-	normalized, pack, err := normalizeLibraryGame(game)
+	normalized, pack, err := normalizeAndMaterializeLibraryGame(game)
 	if err != nil {
 		return roleplay.LibraryGame{}, err
 	}
@@ -236,6 +256,9 @@ func (s *GameService) DeleteGame(gameID string) error {
 	delete(s.packs, gameID)
 	s.sessions = sessionsWithoutGameID(s.sessions, gameID)
 	s.gameIDs = removeGameID(s.gameIDs, gameID)
+	if err := deleteLibraryGameAssets(gameID); err != nil {
+		s.logErrorf("delete_game delete_assets_failed game=%s error=%v", gameID, err)
+	}
 
 	if s.sessionRepo != nil {
 		stored, err := s.sessionRepo.list(gameID)
@@ -294,6 +317,7 @@ func cloneLibraryGame(game roleplay.LibraryGame) roleplay.LibraryGame {
 	game.Files = files
 	game.PhotoURLs = append([]string{}, game.PhotoURLs...)
 	game.MapURLs = append([]string{}, game.MapURLs...)
+	game.Scenes = append([]roleplay.SceneAsset{}, game.Scenes...)
 	return game
 }
 
@@ -305,7 +329,7 @@ func normalizeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, role
 	game.Title = strings.TrimSpace(game.Title)
 	if game.Title == "" {
 		var metadata roleplay.GameMetadata
-		if err := json.Unmarshal([]byte(game.Files[roleplay.MetadataFileName]), &metadata); err == nil {
+		if err := json.Unmarshal([]byte(game.Files[strings.ToLower(roleplay.MetadataFileName)]), &metadata); err == nil {
 			game.Title = metadata.GameTitle()
 		}
 	}
@@ -324,9 +348,58 @@ func normalizeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, role
 		return roleplay.LibraryGame{}, roleplay.StoryPack{}, err
 	}
 	game.Files = pack.Files
-	game.PhotoURLs = append([]string{}, game.PhotoURLs...)
+	game.Scenes = append([]roleplay.SceneAsset{}, pack.Scenes...)
+	if len(pack.Scenes) > 0 {
+		game.PhotoURLs = game.PhotoURLs[:0]
+		for _, scene := range pack.Scenes {
+			game.PhotoURLs = append(game.PhotoURLs, scene.URL)
+		}
+	}
 	game.MapURLs = append([]string{}, game.MapURLs...)
 	return game, pack, nil
+}
+
+func normalizeAndMaterializeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, roleplay.StoryPack, error) {
+	normalized, _, err := normalizeLibraryGame(game)
+	if err != nil {
+		return roleplay.LibraryGame{}, roleplay.StoryPack{}, err
+	}
+	normalized, err = materializeLibraryGameAssets(normalized)
+	if err != nil {
+		return roleplay.LibraryGame{}, roleplay.StoryPack{}, err
+	}
+	return normalizeLibraryGame(normalized)
+}
+
+func summarizeKeysWithPrefix(files map[string]string, prefix string) string {
+	keys := make([]string, 0, len(files))
+	for key := range files {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return "-"
+	}
+	slices.Sort(keys)
+	if len(keys) > 12 {
+		keys = append(keys[:12], fmt.Sprintf("...(+%d)", len(keys)-12))
+	}
+	return strings.Join(keys, ",")
+}
+
+func summarizeSceneURLs(scenes []roleplay.SceneAsset) string {
+	if len(scenes) == 0 {
+		return "-"
+	}
+	items := make([]string, 0, len(scenes))
+	for _, scene := range scenes {
+		items = append(items, fmt.Sprintf("%s=%s", scene.ID, scene.URL))
+	}
+	if len(items) > 8 {
+		items = append(items[:8], fmt.Sprintf("...(+%d)", len(items)-8))
+	}
+	return strings.Join(items, ",")
 }
 
 func sessionsWithoutGameID(sessions map[string]*roleplay.GameSession, gameID string) map[string]*roleplay.GameSession {

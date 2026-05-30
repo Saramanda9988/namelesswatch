@@ -111,6 +111,7 @@ export function PlayPage() {
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
+  const [activeSceneId, setActiveSceneId] = React.useState<string>()
   const [snapshotBusy, setSnapshotBusy] = React.useState(false)
   const [snapshotHint, setSnapshotHint] = React.useState<string>()
   const [isLoadOpen, setIsLoadOpen] = React.useState(false)
@@ -147,6 +148,7 @@ export function PlayPage() {
     setTurns([])
     setLatestResult(undefined)
     setSessionId(undefined)
+    setActiveSceneId(currentGame.scenes?.[0]?.id)
 
     const resumeId = resumeIdRef.current
 
@@ -168,6 +170,9 @@ export function PlayPage() {
         setSessionId(result.sessionId)
         setLatestResult(result)
         setTurns([result.turn])
+        if (result.scene?.id) {
+          setActiveSceneId(result.scene.id)
+        }
       }
       catch (cause) {
         if (!cancelled) {
@@ -202,6 +207,9 @@ export function PlayPage() {
       logRuntimeInfo(`[play] choice result session=${sessionId} state=${result.state} tools=${result.tools?.length ?? 0} ending=${Boolean(result.ending)}`)
       setLatestResult(result)
       setTurns((currentTurns) => [...currentTurns, result.turn])
+      if (result.scene?.id) {
+        setActiveSceneId(result.scene.id)
+      }
     }
     catch (cause) {
       logRuntimeError(`[play] submit choice failed session=${sessionId} choice=${choiceId} error=${cause instanceof Error ? cause.message : String(cause)}`)
@@ -302,8 +310,21 @@ export function PlayPage() {
   const isEnded = latestResult?.state === 'ended'
   const currentTurn = renderableTurns.at(-1)
   const currentLines = currentTurn?.payload ?? []
-  const sceneImage = game?.photoUrls?.[0]
+  const activeScene = React.useMemo(() => {
+    if (!game) {
+      return undefined
+    }
+    return game.scenes?.find((scene) => scene.id === activeSceneId) ?? game.scenes?.[0]
+  }, [activeSceneId, game])
+  const sceneImage = activeScene?.url || game?.photoUrls?.[0]
   const mapImage = game?.mapUrls?.[0]
+
+  React.useEffect(() => {
+    if (!game) {
+      return
+    }
+    logRuntimeInfo(`[play] scene resolved game=${game.id} scenes=${game.scenes?.length ?? 0} active=${activeScene?.id ?? activeSceneId ?? ''} image=${sceneImage ?? ''}`)
+  }, [activeScene?.id, activeSceneId, game, sceneImage])
 
   const { revealedLines, activeIndex, phase, isComplete, advance } = useNarrativeReveal({
     lines: currentLines,
@@ -418,11 +439,11 @@ export function PlayPage() {
             </Button>
           </div>
 
-          <div className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2 rounded-md border bg-background/55 px-3 py-2 text-sm text-muted-foreground backdrop-blur-md md:flex">
-            <Bot className="size-4" />
-            <span className="max-w-[44vw] truncate">{game.title}</span>
-            <Separator orientation="vertical" className="h-4" />
-            <span>{sessionId ? `Session ${sessionId.slice(-6)}` : '准备会话'}</span>
+            <div className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2 rounded-md border bg-background/55 px-3 py-2 text-sm text-muted-foreground backdrop-blur-md md:flex">
+              <Bot className="size-4" />
+              <span className="max-w-[44vw] truncate">{game.title}</span>
+              <Separator orientation="vertical" className="h-4" />
+              <span>{sessionId ? `Session ${sessionId.slice(-6)}` : '准备会话'}</span>
           </div>
 
           <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
@@ -558,6 +579,9 @@ export function PlayPage() {
               <div className="flex items-center gap-2">
                 <Triangle className="size-4 fill-current text-muted-foreground" />
                 <h2 className="text-xl font-semibold">事件回忆</h2>
+              </div>
+              <div className="rounded-md border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+                当前场景：{activeScene?.name || activeSceneId || '未选择'}
               </div>
               <div className="rounded-md border bg-card/50 px-3 py-3 text-sm font-medium text-muted-foreground">
                 【场景画外音.................................】
