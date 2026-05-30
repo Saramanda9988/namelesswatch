@@ -493,8 +493,8 @@ export function PlayPage() {
               size="icon-lg"
               className="bg-background/55 backdrop-blur-md"
               aria-label={bgmButtonLabel}
+              aria-pressed={bgmEnabled}
               title={bgmButtonLabel}
-              disabled={!currentBgmId && !bgmEnabled}
               onClick={handleBgmControl}
             >
               {bgmEnabled && !bgmPlayer.isBlocked ? <Volume2 data-icon /> : <VolumeX data-icon />}
