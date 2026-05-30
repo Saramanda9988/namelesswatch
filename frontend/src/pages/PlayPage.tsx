@@ -20,6 +20,7 @@ import * as React from 'react'
 import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
 import { LogError, LogInfo } from '../../wailsjs/runtime/runtime'
 import { PlaySidebar, type PlaySidebarHistoryItem, type PlaySidebarSceneMarker } from '@/components/play-sidebar'
+import { PlaySettingsModal } from '@/components/play-settings-modal'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -116,6 +117,7 @@ export function PlayPage() {
   const [snapshots, setSnapshots] = React.useState<service.SessionSummary[]>()
   const [loadBusyId, setLoadBusyId] = React.useState<string>()
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
 
   // Capture the pending resume target exactly once. Reading/clearing it inside the
   // start effect breaks under React StrictMode (the effect runs twice; the first run
@@ -402,9 +404,14 @@ export function PlayPage() {
     ? choiceTool.prompt
     : revealedLines.at(-1) ?? ''
 
+  const isBgmAudible = bgmEnabled && bgmVolume > 0
+
   function handleBgmControl() {
-    if (!bgmEnabled) {
-      updateSettings({ bgmEnabled: true })
+    if (!isBgmAudible) {
+      updateSettings({
+        bgmEnabled: true,
+        bgmVolume: bgmVolume > 0 ? bgmVolume : 64,
+      })
       return
     }
     if (bgmPlayer.isBlocked) {
@@ -414,7 +421,7 @@ export function PlayPage() {
     updateSettings({ bgmEnabled: false })
   }
 
-  const bgmButtonLabel = !bgmEnabled
+  const bgmButtonLabel = !isBgmAudible
     ? '启用背景音乐'
     : bgmPlayer.isBlocked
       ? '启用音乐播放'
@@ -470,10 +477,16 @@ export function PlayPage() {
                 <ArrowLeft data-icon />
               </Link>
             </Button>
-            <Button asChild variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="设置" title="设置">
-              <Link to="/settings">
-                <Settings data-icon />
-              </Link>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
+              aria-label="设置"
+              title="设置"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              <Settings data-icon />
             </Button>
             <Button
               type="button"
@@ -493,11 +506,11 @@ export function PlayPage() {
               size="icon-lg"
               className="bg-background/55 backdrop-blur-md"
               aria-label={bgmButtonLabel}
-              aria-pressed={bgmEnabled}
+              aria-pressed={isBgmAudible}
               title={bgmButtonLabel}
               onClick={handleBgmControl}
             >
-              {bgmEnabled && !bgmPlayer.isBlocked ? <Volume2 data-icon /> : <VolumeX data-icon />}
+              {isBgmAudible && !bgmPlayer.isBlocked ? <Volume2 data-icon /> : <VolumeX data-icon />}
             </Button>
             <Button
               type="button"
@@ -697,6 +710,7 @@ export function PlayPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <PlaySettingsModal open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </div>
   )
 }
