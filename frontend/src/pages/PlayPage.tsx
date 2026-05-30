@@ -7,20 +7,18 @@ import {
   FolderOpen,
   Loader2,
   Map,
-  MessageSquare,
   Moon,
   RefreshCcw,
   Save,
   Settings,
   SunMedium,
   Trash2,
-  User,
 } from 'lucide-react'
 import * as React from 'react'
 
 import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
 import { LogError, LogInfo } from '../../wailsjs/runtime/runtime'
-import { AspectRatio } from '@/components/ui/aspect-ratio'
+import { PlaySidebar, type PlaySidebarHistoryItem } from '@/components/play-sidebar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -112,6 +110,7 @@ export function PlayPage() {
   const [isLoadOpen, setIsLoadOpen] = React.useState(false)
   const [snapshots, setSnapshots] = React.useState<service.SessionSummary[]>()
   const [loadBusyId, setLoadBusyId] = React.useState<string>()
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false)
 
   // Capture the pending resume target exactly once. Reading/clearing it inside the
   // start effect breaks under React StrictMode (the effect runs twice; the first run
@@ -348,7 +347,7 @@ export function PlayPage() {
   // The currently-typing AI turn stays exclusively in the left box and only joins the
   // history once it is fully revealed; the player's message appears as soon as it is sent.
   const historyItems = React.useMemo(() => {
-    const items: Array<{ key: string, role: 'ai' | 'user', text: string }> = []
+    const items: PlaySidebarHistoryItem[] = []
     renderableTurns.forEach((turn, index) => {
       const isLatest = index === renderableTurns.length - 1
       if (!isLatest || isComplete) {
@@ -361,15 +360,6 @@ export function PlayPage() {
     })
     return items
   }, [renderableTurns, choiceLabels, isComplete])
-
-  const historyScrollRef = React.useRef<HTMLDivElement>(null)
-
-  React.useEffect(() => {
-    const node = historyScrollRef.current
-    if (node) {
-      node.scrollTop = node.scrollHeight
-    }
-  }, [historyItems.length])
 
   const canAdvance = !isStarting && !error && currentLines.length > 0 && !isComplete
   const showChoicePanel = Boolean(choiceTool && !isEnded && isComplete)
@@ -465,6 +455,17 @@ export function PlayPage() {
 
           <div className="absolute right-4 top-4 z-20 flex items-center gap-2 lg:hidden">
             <Badge variant={isEnded ? 'default' : 'secondary'}>{isEnded ? '已结束' : 'AI 主持'}</Badge>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
+              aria-label="打开侧栏"
+              title="打开侧栏"
+              onClick={() => setIsSidebarOpen(true)}
+            >
+              <Map data-icon />
+            </Button>
             <Button asChild variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="设置">
               <Link to="/settings">
                 <Settings data-icon />
@@ -573,81 +574,14 @@ export function PlayPage() {
           ) : null}
         </section>
 
-        <aside className="hidden min-h-0 flex-col border-l bg-background lg:flex">
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="flex flex-col gap-3 px-4 pt-4 pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Badge variant="outline" className="size-7 justify-center rounded-md p-0">
-                    <Map data-icon />
-                  </Badge>
-                  <div className="min-w-0">
-                    <h2 className="truncate text-lg font-semibold">地图简览</h2>
-                    <p className="truncate text-xs text-muted-foreground">{game.title}</p>
-                  </div>
-                </div>
-                <Button asChild variant="ghost" size="icon-lg" aria-label="设置">
-                  <Link to="/settings">
-                    <Settings data-icon />
-                  </Link>
-                </Button>
-              </div>
-
-              <AspectRatio ratio={1.54} className="overflow-hidden rounded-md border bg-card">
-                {mapImage ? (
-                  <img src={mapImage} alt="" className="size-full object-cover" />
-                ) : (
-                  <MiniMapPlaceholder />
-                )}
-              </AspectRatio>
-            </div>
-
-            <Separator />
-
-            <section className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3 pb-4">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="size-4 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">聊天记录</h2>
-              </div>
-              <div className="rounded-md border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                当前场景：{activeScene?.name || activeSceneId || '未选择'}
-              </div>
-              <div ref={historyScrollRef} className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-2">
-                {historyItems.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    当前对话完整展示后，会逐条归档到这里。
-                  </p>
-                ) : (
-                  <div className="flex flex-col gap-3 pb-2">
-                    {historyItems.map((item) => (
-                      item.role === 'user' ? (
-                        <div key={item.key} className="flex flex-col items-end gap-1.5 pl-6">
-                          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                            <span>我的选择</span>
-                            <User className="size-3.5" />
-                          </div>
-                          <p className="whitespace-pre-line rounded-md rounded-tr-sm bg-primary px-3 py-2 text-sm leading-6 text-primary-foreground">
-                            {item.text}
-                          </p>
-                        </div>
-                      ) : (
-                        <div key={item.key} className="flex flex-col gap-1.5 pr-6">
-                          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                            <Bot className="size-3.5" />
-                            <span>叙事</span>
-                          </div>
-                          <p className="whitespace-pre-line rounded-md rounded-tl-sm border bg-card/50 px-3 py-2 text-sm leading-6 text-foreground/90">
-                            {item.text}
-                          </p>
-                        </div>
-                      )
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-        </aside>
+        <PlaySidebar
+          gameTitle={game.title}
+          mapImage={mapImage}
+          activeSceneLabel={activeScene?.name || activeSceneId || '未选择'}
+          historyItems={historyItems}
+          open={isSidebarOpen}
+          onOpenChange={setIsSidebarOpen}
+        />
       </main>
 
       <Dialog open={isLoadOpen} onOpenChange={setIsLoadOpen}>
@@ -715,31 +649,4 @@ function formatSaveTime(value: string) {
     return value
   }
   return date.toLocaleString()
-}
-
-function MiniMapPlaceholder() {
-  return (
-    <div className="grid size-full grid-cols-[0.7fr_1.05fr_0.7fr] grid-rows-[0.62fr_0.76fr_0.72fr] gap-1 bg-background p-1">
-      <div className="border bg-card" />
-      <div className="border bg-muted" />
-      <div className="relative border bg-card">
-        <div className="absolute right-1 top-1 h-5 w-8 bg-muted" />
-      </div>
-      <div className="relative border bg-card">
-        <div className="absolute left-0 top-2 h-6 w-14 bg-muted" />
-        <div className="absolute bottom-1 left-1 h-5 w-5 bg-muted" />
-      </div>
-      <div className="relative row-span-2 border bg-card">
-        <div className="absolute left-0 top-2 h-14 w-6 bg-muted" />
-        <div className="absolute left-0 top-1 h-5 w-16 bg-muted" />
-      </div>
-      <div className="border bg-card" />
-      <div className="relative border bg-card">
-        <div className="absolute left-0 top-2 h-7 w-16 bg-muted" />
-      </div>
-      <div className="relative border bg-card">
-        <div className="absolute right-0 top-3 h-8 w-1 bg-muted" />
-      </div>
-    </div>
-  )
 }
