@@ -12,7 +12,6 @@ import {
   RefreshCcw,
   Save,
   Settings,
-  Sparkles,
   SunMedium,
   Trash2,
   User,
@@ -373,6 +372,10 @@ export function PlayPage() {
   }, [historyItems.length])
 
   const canAdvance = !isStarting && !error && currentLines.length > 0 && !isComplete
+  const showChoicePanel = Boolean(choiceTool && !isEnded && isComplete)
+  const visibleNarrativeLine = showChoicePanel && choiceTool?.prompt
+    ? choiceTool.prompt
+    : revealedLines.at(-1) ?? ''
 
   React.useEffect(() => {
     if (!canAdvance) {
@@ -512,8 +515,8 @@ export function PlayPage() {
                   >
                     <div className="flex flex-col gap-2 text-base leading-7 text-foreground md:text-lg">
                       <p key={`${currentTurn?.id ?? 'turn'}-${activeIndex}`} className="text-pretty">
-                        {revealedLines.at(-1) ?? ''}
-                        {phase === 'typing' ? (
+                        {visibleNarrativeLine}
+                        {phase === 'typing' && !showChoicePanel ? (
                           <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-foreground align-[-0.1em]" />
                         ) : null}
                       </p>
@@ -525,33 +528,6 @@ export function PlayPage() {
                   <p className="text-base leading-7 text-muted-foreground">等待 AI 主持生成开场叙事...</p>
                 ) : null}
               </div>
-
-              {choiceTool && !isEnded && isComplete ? (
-                <>
-                  <Separator />
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Sparkles className="size-4" />
-                      <span>{choiceTool.prompt || '你要怎么做？'}</span>
-                    </div>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {choiceTool.options.map((option) => (
-                        <Button
-                          key={option.id}
-                          type="button"
-                          variant="outline"
-                          className="h-auto min-h-10 justify-start whitespace-normal bg-card/70 px-3 py-2 text-left"
-                          disabled={Boolean(pendingChoiceId)}
-                          onClick={() => void submitChoice(option.id)}
-                        >
-                          {pendingChoiceId === option.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
-                          {option.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : null}
 
               {isEnded && latestResult?.ending && isComplete ? (
                 <>
@@ -569,11 +545,32 @@ export function PlayPage() {
                 </>
               ) : null}
 
-              {!isStarting && !error && phase === 'waiting' ? (
+              {!isStarting && !error && phase === 'waiting' && !showChoicePanel ? (
                 <ChevronDown className="absolute bottom-4 right-5 size-5 animate-bounce text-muted-foreground" />
               ) : null}
             </section>
           </div>
+
+          {showChoicePanel && choiceTool ? (
+            <section
+              aria-label="行动选项"
+              className="absolute inset-x-4 top-1/2 z-20 mx-auto flex max-w-2xl -translate-y-1/2 flex-col gap-2 md:inset-x-10"
+            >
+              {choiceTool.options.map((option) => (
+                <Button
+                  key={option.id}
+                  type="button"
+                  variant="outline"
+                  className="h-auto min-h-11 justify-center whitespace-normal bg-card/72 px-4 py-2.5 text-center text-base leading-6 shadow-lg shadow-black/25 backdrop-blur-md transition-[background,border-color,transform] hover:-translate-y-0.5 hover:bg-card/90"
+                  disabled={Boolean(pendingChoiceId)}
+                  onClick={() => void submitChoice(option.id)}
+                >
+                  {pendingChoiceId === option.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
+                  {option.label}
+                </Button>
+              ))}
+            </section>
+          ) : null}
         </section>
 
         <aside className="hidden min-h-0 flex-col border-l bg-background lg:flex">
