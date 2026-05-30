@@ -171,6 +171,7 @@ func BuildSystemPrompt() string {
 	builder.WriteString("\n\n输出格式要求：\n")
 	builder.WriteString("必须只输出严格 JSON，不允许 Markdown 包裹或额外解释。\n")
 	builder.WriteString("不要直接泄露 true.md 的隐藏真相；前端只会展示 game_turn.payload。\n")
+	builder.WriteString("payload 必须按句子分割：每个数组元素只放一个完整句子（以。！？等句末标点或换行为界），不要把多句话塞进同一个元素，也不要把一句话拆成多个元素。前端会逐句展示，所以分割粒度直接影响节奏。\n")
 	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
 	builder.WriteString("第一回合必须是开场叙事：从 scene.md 当前情境开始，不能假设用户已经行动，不能直接触发 endings.md 的任何结局。\n")
 	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")

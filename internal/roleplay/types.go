@@ -65,6 +65,9 @@ type GameSession struct {
 	WorkspacePath string     `json:"workspacePath"`
 	MemoryPath    string     `json:"memoryPath"`
 	Turns         []GameTurn `json:"turns"`
+	Label         string     `json:"label,omitempty"`
+	IsSnapshot    bool       `json:"isSnapshot,omitempty"`
+	ParentID      string     `json:"parentId,omitempty"`
 	CreatedAt     string     `json:"createdAt"`
 	UpdatedAt     string     `json:"updatedAt"`
 }
@@ -231,24 +234,22 @@ func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create session workspace: %w", err)
 	}
-	return NewGameSessionInWorkspace(gameID, pack, workspace)
+	return newGameSessionWithWorkspace(NewID("session"), gameID, pack, workspace)
 }
 
-func NewGameSessionInRoot(gameID string, pack StoryPack, sessionsRoot string) (*GameSession, error) {
+// NewGameSessionInDir creates a session whose workspace lives under a persistent
+// base directory (baseDir/{sessionID}/workspace) instead of the system temp dir,
+// so the session and its memory.md survive process restarts.
+func NewGameSessionInDir(gameID string, pack StoryPack, baseDir string) (*GameSession, error) {
 	sessionID := NewID("session")
-	workspace := filepath.Join(sessionsRoot, safePathSegment(gameID), sessionID)
-	session, err := NewGameSessionInWorkspace(gameID, pack, workspace)
-	if err != nil {
-		return nil, err
-	}
-	session.ID = sessionID
-	return session, nil
-}
-
-func NewGameSessionInWorkspace(gameID string, pack StoryPack, workspace string) (*GameSession, error) {
+	workspace := filepath.Join(baseDir, sessionID, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return nil, fmt.Errorf("create session workspace: %w", err)
 	}
+	return newGameSessionWithWorkspace(sessionID, gameID, pack, workspace)
+}
+
+func newGameSessionWithWorkspace(sessionID, gameID string, pack StoryPack, workspace string) (*GameSession, error) {
 	for _, fileName := range RequiredStoryFiles {
 		if err := os.WriteFile(filepath.Join(workspace, fileName), []byte(pack.Files[fileName]), 0o600); err != nil {
 			return nil, fmt.Errorf("copy %s to session workspace: %w", fileName, err)
@@ -257,7 +258,7 @@ func NewGameSessionInWorkspace(gameID string, pack StoryPack, workspace string) 
 
 	now := NowISO()
 	return &GameSession{
-		ID:            NewID("session"),
+		ID:            sessionID,
 		GameID:        gameID,
 		State:         SessionStatePlaying,
 		WorkspacePath: workspace,
@@ -266,29 +267,6 @@ func NewGameSessionInWorkspace(gameID string, pack StoryPack, workspace string) 
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}, nil
-}
-
-func safePathSegment(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "unknown"
-	}
-	replacer := strings.NewReplacer(
-		"/", "_",
-		"\\", "_",
-		":", "_",
-		"*", "_",
-		"?", "_",
-		"\"", "_",
-		"<", "_",
-		">", "_",
-		"|", "_",
-	)
-	value = replacer.Replace(value)
-	if value == "." || value == ".." {
-		return "unknown"
-	}
-	return value
 }
 
 func (s *GameSession) AppendTurn(turn GameTurn) {
@@ -326,6 +304,9 @@ func (s *GameSession) Clone() GameSession {
 		WorkspacePath: s.WorkspacePath,
 		MemoryPath:    s.MemoryPath,
 		Turns:         turns,
+		Label:         s.Label,
+		IsSnapshot:    s.IsSnapshot,
+		ParentID:      s.ParentID,
 		CreatedAt:     s.CreatedAt,
 		UpdatedAt:     s.UpdatedAt,
 	}

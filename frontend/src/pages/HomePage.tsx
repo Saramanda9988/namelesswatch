@@ -1,5 +1,5 @@
-import { Link } from '@tanstack/react-router'
-import { BookOpen, FolderPlus, Gamepad2, Play, Settings, Trash2 } from 'lucide-react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { BookOpen, FolderPlus, Gamepad2, History, Play, Settings, Trash2 } from 'lucide-react'
 import * as React from 'react'
 
 import { AspectRatio } from '@/components/ui/aspect-ratio'
@@ -21,18 +21,71 @@ const directoryInputProps = {
 
 export function HomePage() {
   const inputRef = React.useRef<HTMLInputElement>(null)
+  const navigate = useNavigate()
   const games = useGameStore((state) => state.games)
   const fetchGames = useGameStore((state) => state.fetchGames)
   const importGameFiles = useGameStore((state) => state.importGameFiles)
   const deleteGame = useGameStore((state) => state.deleteGame)
+  const listSessions = useGameStore((state) => state.listSessions)
+  const setPendingResumeSession = useGameStore((state) => state.setPendingResumeSession)
   const [status, setStatus] = React.useState('等待资源包')
   const [isImporting, setIsImporting] = React.useState(false)
   const [deletingGameId, setDeletingGameId] = React.useState<string>()
   const [search, setSearch] = React.useState('')
+  const [continueByGame, setContinueByGame] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
     void fetchGames()
   }, [fetchGames])
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    async function loadSaves() {
+      const entries = await Promise.all(
+        games.map(async (game) => {
+          try {
+            const sessions = await listSessions(game.id)
+            const resumable = sessions.find((session) => !session.isSnapshot)
+            return [game.id, resumable?.id] as const
+          }
+          catch {
+            return [game.id, undefined] as const
+          }
+        }),
+      )
+      if (cancelled) {
+        return
+      }
+      const next: Record<string, string> = {}
+      for (const [gameId, sessionId] of entries) {
+        if (sessionId) {
+          next[gameId] = sessionId
+        }
+      }
+      setContinueByGame(next)
+    }
+
+    if (games.length > 0) {
+      void loadSaves()
+    }
+    else {
+      setContinueByGame({})
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [games, listSessions])
+
+  function handleContinue(gameId: string) {
+    const sessionId = continueByGame[gameId]
+    if (!sessionId) {
+      return
+    }
+    setPendingResumeSession(sessionId)
+    void navigate({ to: '/play/$gameId', params: { gameId } })
+  }
 
   const visibleGames = React.useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -167,11 +220,31 @@ export function HomePage() {
                       </div>
                     )}
                     <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#1a1d20] to-transparent" />
-                    <Button asChild size="icon" className="absolute right-3 top-3 rounded-full bg-[#59677e] text-white opacity-0 shadow-lg transition-opacity hover:bg-[#6b7b94] group-hover:opacity-100">
-                      <Link to="/play/$gameId" params={{ gameId: game.id }} aria-label={`开始 ${game.title}`}>
-                        <Play className="size-4 fill-current" />
-                      </Link>
-                    </Button>
+                    <div className="absolute right-3 top-3 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                      {continueByGame[game.id] ? (
+                        <Button
+                          type="button"
+                          size="icon"
+                          className="rounded-full bg-[#3f7d52] text-white shadow-lg hover:bg-[#4c9162]"
+                          aria-label={`继续 ${game.title}`}
+                          title="继续游戏（读取上次进度）"
+                          onClick={() => handleContinue(game.id)}
+                        >
+                          <History className="size-4" />
+                        </Button>
+                      ) : null}
+                      <Button asChild size="icon" className="rounded-full bg-[#59677e] text-white shadow-lg hover:bg-[#6b7b94]">
+                        <Link
+                          to="/play/$gameId"
+                          params={{ gameId: game.id }}
+                          aria-label={`开始 ${game.title}`}
+                          title={continueByGame[game.id] ? '重新开始（开新游戏）' : '开始游戏'}
+                          onClick={() => setPendingResumeSession(undefined)}
+                        >
+                          <Play className="size-4 fill-current" />
+                        </Link>
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       size="icon"
@@ -179,6 +252,7 @@ export function HomePage() {
                       className="absolute left-3 top-3 rounded-full opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
                       disabled={deletingGameId === game.id}
                       aria-label={`删除 ${game.title}`}
+                      title="删除游戏"
                       onClick={() => void handleDeleteGame(game.id, game.title)}
                     >
                       <Trash2 className="size-4" />

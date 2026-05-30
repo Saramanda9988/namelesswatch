@@ -90,3 +90,19 @@ func (a *App) SubmitChoice(sessionID string, choiceID string) (roleplay.GameTurn
 func (a *App) GetSession(sessionID string) (roleplay.GameSession, error) {
 	return a.gameService.GetSession(sessionID)
 }
+
+func (a *App) ListSessions(gameID string) ([]service.SessionSummary, error) {
+	return a.gameService.ListSessions(gameID)
+}
+
+func (a *App) ResumeSession(sessionID string) (roleplay.GameTurnResult, error) {
+	return a.gameService.ResumeSession(sessionID)
+}
+
+func (a *App) SaveSnapshot(sessionID string, label string) (service.SessionSummary, error) {
+	return a.gameService.SaveSnapshot(sessionID, label)
+}
+
+func (a *App) DeleteSession(sessionID string) error {
+	return a.gameService.DeleteSession(sessionID)
+}

@@ -140,6 +140,9 @@ export namespace roleplay {
 	    workspacePath: string;
 	    memoryPath: string;
 	    turns: GameTurn[];
+	    label?: string;
+	    isSnapshot?: boolean;
+	    parentId?: string;
 	    createdAt: string;
 	    updatedAt: string;
 	
@@ -155,6 +158,9 @@ export namespace roleplay {
 	        this.workspacePath = source["workspacePath"];
 	        this.memoryPath = source["memoryPath"];
 	        this.turns = this.convertValues(source["turns"], GameTurn);
+	        this.label = source["label"];
+	        this.isSnapshot = source["isSnapshot"];
+	        this.parentId = source["parentId"];
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	    }
@@ -277,6 +283,39 @@ export namespace roleplay {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace service {
+	
+	export class SessionSummary {
+	    id: string;
+	    gameId: string;
+	    state: string;
+	    label?: string;
+	    isSnapshot: boolean;
+	    turnCount: number;
+	    preview: string;
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.gameId = source["gameId"];
+	        this.state = source["state"];
+	        this.label = source["label"];
+	        this.isSnapshot = source["isSnapshot"];
+	        this.turnCount = source["turnCount"];
+	        this.preview = source["preview"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
 	}
 
 }

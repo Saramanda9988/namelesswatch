@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-import { CreateGame, DeleteGame, GetAppConfig, GetGame, GetGames, ImportGamePack, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
-import type { appconf, roleplay } from '../../wailsjs/go/models'
+import { CreateGame, DeleteGame, DeleteSession, GetAppConfig, GetGame, GetGames, ImportGamePack, ListSessions, ResumeSession, SaveSnapshot, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
+import type { appconf, roleplay, service } from '../../wailsjs/go/models'
 
 type GameSettings = {
   textSpeed: number
@@ -14,6 +14,7 @@ type GameSettings = {
 type GameState = {
   games: roleplay.LibraryGame[]
   activeGameId?: string
+  pendingResumeSessionId?: string
   settings: GameSettings
   config?: appconf.AppConfig
   draftConfig?: appconf.AppConfig
@@ -24,6 +25,11 @@ type GameState = {
   deleteGame: (gameId: string) => Promise<void>
   importGameFiles: (files: Record<string, string>) => Promise<roleplay.ImportGameResult>
   setActiveGame: (gameId: string) => void
+  setPendingResumeSession: (sessionId?: string) => void
+  listSessions: (gameId: string) => Promise<service.SessionSummary[]>
+  resumeSession: (sessionId: string) => Promise<roleplay.GameTurnResult>
+  saveSnapshot: (sessionId: string, label: string) => Promise<service.SessionSummary>
+  deleteSession: (sessionId: string) => Promise<void>
   updateSettings: (settings: Partial<GameSettings>) => void
   fetchConfig: () => Promise<void>
   setDraftConfig: (config: appconf.AppConfig) => void
@@ -76,6 +82,11 @@ export const useGameStore = create<GameState>((set) => ({
     return result
   },
   setActiveGame: (gameId) => set({ activeGameId: gameId }),
+  setPendingResumeSession: (sessionId) => set({ pendingResumeSessionId: sessionId }),
+  listSessions: (gameId) => ListSessions(gameId),
+  resumeSession: (sessionId) => ResumeSession(sessionId),
+  saveSnapshot: (sessionId, label) => SaveSnapshot(sessionId, label),
+  deleteSession: (sessionId) => DeleteSession(sessionId),
   updateSettings: (settings) =>
     set((state) => ({
       settings: {

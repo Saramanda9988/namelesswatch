@@ -14,14 +14,28 @@ import (
 )
 
 type GameService struct {
-	ctx      context.Context
-	mu       sync.Mutex
-	config   appconf.AppConfig
-	packs    map[string]roleplay.StoryPack
-	sessions map[string]*roleplay.GameSession
-	games    map[string]roleplay.LibraryGame
-	gameIDs  []string
-	repo     *gameRepository
+	ctx         context.Context
+	mu          sync.Mutex
+	config      appconf.AppConfig
+	packs       map[string]roleplay.StoryPack
+	sessions    map[string]*roleplay.GameSession
+	games       map[string]roleplay.LibraryGame
+	gameIDs     []string
+	repo        *gameRepository
+	sessionRepo *sessionRepository
+}
+
+// SessionSummary is a lightweight view of a stored session for listing saves.
+type SessionSummary struct {
+	ID         string `json:"id"`
+	GameID     string `json:"gameId"`
+	State      string `json:"state"`
+	Label      string `json:"label,omitempty"`
+	IsSnapshot bool   `json:"isSnapshot"`
+	TurnCount  int    `json:"turnCount"`
+	Preview    string `json:"preview"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
 }
 
 func NewGameService(config *appconf.AppConfig) *GameService {
@@ -68,9 +82,15 @@ func (s *GameService) LoadLibrary() error {
 		nextGameIDs = append(nextGameIDs, normalized.ID)
 	}
 
+	sessionRepo, err := newSessionRepository()
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.repo = repo
+	s.sessionRepo = sessionRepo
 	s.games = nextGames
 	s.packs = nextPacks
 	s.gameIDs = nextGameIDs
@@ -216,6 +236,20 @@ func (s *GameService) DeleteGame(gameID string) error {
 	delete(s.packs, gameID)
 	s.sessions = sessionsWithoutGameID(s.sessions, gameID)
 	s.gameIDs = removeGameID(s.gameIDs, gameID)
+
+	if s.sessionRepo != nil {
+		stored, err := s.sessionRepo.list(gameID)
+		if err != nil {
+			s.logErrorf("delete_game list_sessions_failed game=%s error=%v", gameID, err)
+		} else {
+			for _, stale := range stored {
+				if delErr := s.sessionRepo.delete(stale.ID); delErr != nil {
+					s.logErrorf("delete_game delete_session_failed game=%s session=%s error=%v", gameID, stale.ID, delErr)
+				}
+			}
+		}
+	}
+
 	return s.persistLocked()
 }
 
@@ -223,19 +257,22 @@ func (s *GameService) StartGame(gameID string) (roleplay.GameTurnResult, error) 
 	s.logInfof("start_game requested game=%s", gameID)
 	s.mu.Lock()
 	pack, ok := s.packs[gameID]
+	sessionRepo := s.sessionRepo
 	s.mu.Unlock()
 	if !ok {
 		s.logErrorf("start_game failed game=%s error=story pack is not registered in backend", gameID)
 		return roleplay.GameTurnResult{}, errors.New("story pack is not registered in backend")
 	}
 
-	sessionsRoot, err := appconf.GetSubDir("sessions")
-	if err != nil {
-		s.logErrorf("start_game session_root_failed game=%s error=%v", gameID, err)
-		return roleplay.GameTurnResult{}, err
+	var (
+		session *roleplay.GameSession
+		err     error
+	)
+	if sessionRepo != nil {
+		session, err = roleplay.NewGameSessionInDir(gameID, pack, sessionRepo.root)
+	} else {
+		session, err = roleplay.NewGameSession(gameID, pack)
 	}
-
-	session, err := roleplay.NewGameSessionInRoot(gameID, pack, sessionsRoot)
 	if err != nil {
 		s.logErrorf("start_game session_failed game=%s error=%v", gameID, err)
 		return roleplay.GameTurnResult{}, err
@@ -361,14 +398,153 @@ func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.
 
 func (s *GameService) GetSession(sessionID string) (roleplay.GameSession, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	session, ok := s.sessions[sessionID]
-	if !ok {
-		return roleplay.GameSession{}, errors.New("session not found")
+	sessionRepo := s.sessionRepo
+	s.mu.Unlock()
+
+	if ok {
+		return session.Clone(), nil
 	}
 
-	return session.Clone(), nil
+	if sessionRepo != nil {
+		loaded, err := sessionRepo.load(sessionID)
+		if err == nil {
+			return loaded.Clone(), nil
+		}
+	}
+	return roleplay.GameSession{}, errors.New("session not found")
+}
+
+// ListSessions returns stored save summaries for a game (empty gameID = all),
+// most recently updated first.
+func (s *GameService) ListSessions(gameID string) ([]SessionSummary, error) {
+	s.mu.Lock()
+	sessionRepo := s.sessionRepo
+	s.mu.Unlock()
+	if sessionRepo == nil {
+		return []SessionSummary{}, nil
+	}
+
+	stored, err := sessionRepo.list(gameID)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]SessionSummary, 0, len(stored))
+	for i := range stored {
+		summaries = append(summaries, summaryFromSession(&stored[i]))
+	}
+	return summaries, nil
+}
+
+// ResumeSession loads a stored session back into memory so play can continue,
+// and returns the latest renderable turn. Snapshots are forked into a fresh
+// playable session so the snapshot itself stays frozen.
+func (s *GameService) ResumeSession(sessionID string) (roleplay.GameTurnResult, error) {
+	s.mu.Lock()
+	sessionRepo := s.sessionRepo
+	if existing, ok := s.sessions[sessionID]; ok && !existing.IsSnapshot {
+		result := roleplay.ResultFromSession(existing)
+		s.mu.Unlock()
+		return result, nil
+	}
+	s.mu.Unlock()
+
+	if sessionRepo == nil {
+		return roleplay.GameTurnResult{}, errors.New("session repository is not initialized")
+	}
+
+	loaded, err := sessionRepo.load(sessionID)
+	if err != nil {
+		s.logErrorf("resume_session load_failed session=%s error=%v", sessionID, err)
+		return roleplay.GameTurnResult{}, errors.New("session not found")
+	}
+
+	session := loaded
+	if loaded.IsSnapshot {
+		forked, forkErr := sessionRepo.fork(loaded)
+		if forkErr != nil {
+			s.logErrorf("resume_session fork_failed session=%s error=%v", sessionID, forkErr)
+			return roleplay.GameTurnResult{}, forkErr
+		}
+		session = forked
+	}
+
+	s.mu.Lock()
+	s.sessions[session.ID] = session
+	s.mu.Unlock()
+
+	s.logInfof("resume_session done from=%s session=%s game=%s turns=%d snapshot=%t", sessionID, session.ID, session.GameID, len(session.Turns), loaded.IsSnapshot)
+	return roleplay.ResultFromSession(session), nil
+}
+
+// SaveSnapshot stores a frozen copy of the current session under a label.
+func (s *GameService) SaveSnapshot(sessionID string, label string) (SessionSummary, error) {
+	s.mu.Lock()
+	sessionRepo := s.sessionRepo
+	var source *roleplay.GameSession
+	if existing, ok := s.sessions[sessionID]; ok {
+		clone := existing.Clone()
+		source = &clone
+	}
+	s.mu.Unlock()
+
+	if sessionRepo == nil {
+		return SessionSummary{}, errors.New("session repository is not initialized")
+	}
+
+	if source == nil {
+		loaded, err := sessionRepo.load(sessionID)
+		if err != nil {
+			return SessionSummary{}, errors.New("session not found")
+		}
+		source = loaded
+	}
+
+	snap, err := sessionRepo.snapshot(source, strings.TrimSpace(label))
+	if err != nil {
+		s.logErrorf("save_snapshot failed session=%s error=%v", sessionID, err)
+		return SessionSummary{}, err
+	}
+	s.logInfof("save_snapshot done session=%s snapshot=%s label=%q", sessionID, snap.ID, snap.Label)
+	return summaryFromSession(snap), nil
+}
+
+// DeleteSession removes a stored session/snapshot from disk and memory.
+func (s *GameService) DeleteSession(sessionID string) error {
+	s.mu.Lock()
+	sessionRepo := s.sessionRepo
+	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+
+	if sessionRepo == nil {
+		return errors.New("session repository is not initialized")
+	}
+	return sessionRepo.delete(sessionID)
+}
+
+func summaryFromSession(session *roleplay.GameSession) SessionSummary {
+	preview := ""
+	for i := len(session.Turns) - 1; i >= 0; i-- {
+		turn := session.Turns[i]
+		if turn.Role == roleplay.TurnRoleAI && len(turn.Payload) > 0 {
+			preview = turn.Payload[len(turn.Payload)-1]
+			break
+		}
+	}
+	if runes := []rune(preview); len(runes) > 60 {
+		preview = string(runes[:60])
+	}
+	return SessionSummary{
+		ID:         session.ID,
+		GameID:     session.GameID,
+		State:      session.State,
+		Label:      session.Label,
+		IsSnapshot: session.IsSnapshot,
+		TurnCount:  len(session.Turns),
+		Preview:    preview,
+		CreatedAt:  session.CreatedAt,
+		UpdatedAt:  session.UpdatedAt,
+	}
 }
 
 func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult, error) {
@@ -388,14 +564,21 @@ func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult,
 	result, err := roleplay.RunAITurnWithLogger(s.ctx, client, pack, session, s.logInfof)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if current, ok := s.sessions[sessionID]; ok {
 		*current = *session
 	}
+	sessionRepo := s.sessionRepo
+	s.mu.Unlock()
+
 	if err != nil {
 		s.logErrorf("advance_session failed game=%s session=%s error=%v", session.GameID, session.ID, err)
 	} else {
 		s.logInfof("advance_session done game=%s session=%s state=%s payload_lines=%d tools=%d ending=%t", session.GameID, session.ID, result.State, len(result.Payload), len(result.Tools), result.Ending != nil)
+		if sessionRepo != nil {
+			if saveErr := sessionRepo.save(session); saveErr != nil {
+				s.logErrorf("advance_session autosave_failed game=%s session=%s error=%v", session.GameID, session.ID, saveErr)
+			}
+		}
 	}
 
 	return result, err

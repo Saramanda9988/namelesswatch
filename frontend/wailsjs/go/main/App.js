@@ -10,6 +10,10 @@ export function DeleteGame(arg1) {
   return window['go']['main']['App']['DeleteGame'](arg1);
 }
 
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
 export function GetAppConfig() {
   return window['go']['main']['App']['GetAppConfig']();
 }
@@ -30,8 +34,20 @@ export function ImportGamePack(arg1) {
   return window['go']['main']['App']['ImportGamePack'](arg1);
 }
 
+export function ListSessions(arg1) {
+  return window['go']['main']['App']['ListSessions'](arg1);
+}
+
 export function RegisterGamePack(arg1, arg2) {
   return window['go']['main']['App']['RegisterGamePack'](arg1, arg2);
+}
+
+export function ResumeSession(arg1) {
+  return window['go']['main']['App']['ResumeSession'](arg1);
+}
+
+export function SaveSnapshot(arg1, arg2) {
+  return window['go']['main']['App']['SaveSnapshot'](arg1, arg2);
 }
 
 export function StartGame(arg1) {

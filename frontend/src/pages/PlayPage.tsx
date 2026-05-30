@@ -5,13 +5,16 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
+  FolderOpen,
   Loader2,
   Map,
   Moon,
   RefreshCcw,
+  Save,
   Settings,
   Sparkles,
   SunMedium,
+  Trash2,
   Triangle,
 } from 'lucide-react'
 import * as React from 'react'
@@ -22,10 +25,12 @@ import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { useNarrativeReveal } from '@/hooks/use-narrative-reveal'
 import { useGameStore } from '@/stores/game-store'
-import type { roleplay } from '../../wailsjs/go/models'
+import type { roleplay, service } from '../../wailsjs/go/models'
 
 function isRenderableTurn(turn: roleplay.GameTurn) {
   return turn.role === 'ai' && turn.payload.length > 0
@@ -93,6 +98,12 @@ export function PlayPage() {
   const navigate = useNavigate()
   const games = useGameStore((state) => state.games)
   const setActiveGame = useGameStore((state) => state.setActiveGame)
+  const textSpeed = useGameStore((state) => state.settings.textSpeed)
+  const autoAdvance = useGameStore((state) => state.settings.autoAdvance)
+  const resumeSession = useGameStore((state) => state.resumeSession)
+  const saveSnapshot = useGameStore((state) => state.saveSnapshot)
+  const listSessions = useGameStore((state) => state.listSessions)
+  const deleteSession = useGameStore((state) => state.deleteSession)
   const game = games.find((item) => item.id === gameId)
   const [sessionId, setSessionId] = React.useState<string>()
   const [latestResult, setLatestResult] = React.useState<roleplay.GameTurnResult>()
@@ -100,6 +111,22 @@ export function PlayPage() {
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
+  const [snapshotBusy, setSnapshotBusy] = React.useState(false)
+  const [snapshotHint, setSnapshotHint] = React.useState<string>()
+  const [isLoadOpen, setIsLoadOpen] = React.useState(false)
+  const [snapshots, setSnapshots] = React.useState<service.SessionSummary[]>()
+  const [loadBusyId, setLoadBusyId] = React.useState<string>()
+
+  // Capture the pending resume target exactly once. Reading/clearing it inside the
+  // start effect breaks under React StrictMode (the effect runs twice; the first run
+  // clears it so the second run falls back to starting a brand-new game).
+  const resumeIdRef = React.useRef<string | undefined>(undefined)
+  const resumeCapturedRef = React.useRef(false)
+  if (!resumeCapturedRef.current) {
+    resumeCapturedRef.current = true
+    resumeIdRef.current = useGameStore.getState().pendingResumeSessionId
+    useGameStore.getState().setPendingResumeSession(undefined)
+  }
 
   React.useEffect(() => {
     if (!game) {
@@ -121,9 +148,19 @@ export function PlayPage() {
     setLatestResult(undefined)
     setSessionId(undefined)
 
+    const resumeId = resumeIdRef.current
+
     async function start() {
       try {
-        const result = await startGameOnce(currentGame)
+        let result: roleplay.GameTurnResult
+        if (resumeId) {
+          logRuntimeInfo(`[play] resume requested game=${currentGame.id} session=${resumeId}`)
+          await RegisterGamePack(currentGame.id, currentGame.files)
+          result = await resumeSession(resumeId)
+        }
+        else {
+          result = await startGameOnce(currentGame)
+        }
         if (cancelled) {
           return
         }
@@ -175,6 +212,91 @@ export function PlayPage() {
     }
   }
 
+  async function handleSaveSnapshot() {
+    if (!sessionId || snapshotBusy) {
+      return
+    }
+    const label = window.prompt('存档名称（可留空）', `存档 ${new Date().toLocaleString()}`)
+    if (label === null) {
+      return
+    }
+    setSnapshotBusy(true)
+    setSnapshotHint(undefined)
+    try {
+      const summary = await saveSnapshot(sessionId, label.trim())
+      logRuntimeInfo(`[play] snapshot saved session=${sessionId} snapshot=${summary.id}`)
+      setSnapshotHint('已保存快照')
+      window.setTimeout(() => setSnapshotHint(undefined), 2400)
+    }
+    catch (cause) {
+      logRuntimeError(`[play] snapshot failed session=${sessionId} error=${cause instanceof Error ? cause.message : String(cause)}`)
+      setSnapshotHint('保存失败')
+    }
+    finally {
+      setSnapshotBusy(false)
+    }
+  }
+
+  async function refreshSnapshots() {
+    if (!game) {
+      return
+    }
+    try {
+      const sessions = await listSessions(game.id)
+      setSnapshots(sessions.filter((session) => session.isSnapshot))
+    }
+    catch (cause) {
+      logRuntimeError(`[play] list sessions failed game=${game.id} error=${cause instanceof Error ? cause.message : String(cause)}`)
+      setSnapshots([])
+    }
+  }
+
+  function openLoadDialog() {
+    setSnapshots(undefined)
+    setIsLoadOpen(true)
+    void refreshSnapshots()
+  }
+
+  async function handleLoadSnapshot(snapshotId: string) {
+    if (loadBusyId) {
+      return
+    }
+    setLoadBusyId(snapshotId)
+    setError(undefined)
+    try {
+      const result = await resumeSession(snapshotId)
+      logRuntimeInfo(`[play] loaded snapshot=${snapshotId} session=${result.sessionId}`)
+      setSessionId(result.sessionId)
+      setLatestResult(result)
+      setTurns(result.turn ? [result.turn] : [])
+      setIsLoadOpen(false)
+    }
+    catch (cause) {
+      logRuntimeError(`[play] load snapshot failed snapshot=${snapshotId} error=${cause instanceof Error ? cause.message : String(cause)}`)
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setLoadBusyId(undefined)
+    }
+  }
+
+  async function handleDeleteSnapshot(snapshotId: string) {
+    if (loadBusyId) {
+      return
+    }
+    setLoadBusyId(snapshotId)
+    try {
+      await deleteSession(snapshotId)
+      await refreshSnapshots()
+    }
+    catch (cause) {
+      logRuntimeError(`[play] delete snapshot failed snapshot=${snapshotId} error=${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+    finally {
+      setLoadBusyId(undefined)
+    }
+  }
+
   const renderableTurns = React.useMemo(() => turns.filter(isRenderableTurn), [turns])
   const choiceTool = choiceToolFrom(latestResult)
   const isEnded = latestResult?.state === 'ended'
@@ -182,6 +304,38 @@ export function PlayPage() {
   const currentLines = currentTurn?.payload ?? []
   const sceneImage = game?.photoUrls?.[0]
   const mapImage = game?.mapUrls?.[0]
+
+  const { revealedLines, activeIndex, phase, isComplete, advance } = useNarrativeReveal({
+    lines: currentLines,
+    resetKey: currentTurn?.id ?? 'none',
+    textSpeed,
+    autoAdvance,
+  })
+
+  const narrativeScrollRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const node = narrativeScrollRef.current
+    if (node) {
+      node.scrollTop = node.scrollHeight
+    }
+  }, [revealedLines.length, activeIndex])
+
+  const canAdvance = !isStarting && !error && currentLines.length > 0 && !isComplete
+
+  React.useEffect(() => {
+    if (!canAdvance) {
+      return
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault()
+        advance()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canAdvance, advance])
 
   if (!game) {
     return (
@@ -219,12 +373,40 @@ export function PlayPage() {
                 <ArrowLeft data-icon />
               </Link>
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
+              aria-label="保存快照"
+              title="保存快照"
+              disabled={!sessionId || snapshotBusy}
+              onClick={() => void handleSaveSnapshot()}
+            >
+              {snapshotBusy ? <Loader2 className="animate-spin" data-icon /> : <Save data-icon />}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
+              aria-label="读档"
+              title="读档"
+              onClick={openLoadDialog}
+            >
+              <FolderOpen data-icon />
+            </Button>
             <Button type="button" variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="昼夜">
               <SunMedium data-icon />
             </Button>
             <Button type="button" variant="outline" size="icon-lg" className="bg-background/55 backdrop-blur-md" aria-label="夜间">
               <Moon data-icon />
             </Button>
+            {snapshotHint ? (
+              <span className="rounded-md bg-background/70 px-2 py-1 text-center text-xs text-muted-foreground backdrop-blur-md">
+                {snapshotHint}
+              </span>
+            ) : null}
           </nav>
 
           <div className="absolute right-4 top-4 z-20 flex items-center gap-2 lg:hidden">
@@ -244,7 +426,13 @@ export function PlayPage() {
           </div>
 
           <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
-            <section className="mx-auto flex max-w-4xl flex-col gap-3 rounded-lg border bg-background/78 p-4 shadow-2xl backdrop-blur-md md:p-5">
+            <section
+              role="button"
+              tabIndex={canAdvance ? 0 : -1}
+              aria-label="点击继续"
+              onClick={canAdvance ? () => advance() : undefined}
+              className={`mx-auto flex max-w-4xl flex-col gap-3 rounded-lg border bg-background/78 p-4 shadow-2xl backdrop-blur-md md:p-5 ${canAdvance ? 'cursor-pointer' : ''}`}
+            >
               <div className="flex min-h-[112px] flex-col gap-3">
                 {isStarting ? (
                   <div className="flex items-center gap-3 text-muted-foreground">
@@ -267,15 +455,19 @@ export function PlayPage() {
                 ) : null}
 
                 {!isStarting && !error && currentLines.length > 0 ? (
-                  <ScrollArea className="max-h-[25vh] pr-3">
+                  <div
+                    ref={narrativeScrollRef}
+                    className="max-h-[25vh] overflow-y-auto pr-3"
+                  >
                     <div className="flex flex-col gap-2 text-base leading-7 text-foreground md:text-lg">
-                      {currentLines.map((line, lineIndex) => (
-                        <p key={`${currentTurn?.id ?? 'turn'}-${lineIndex}`} className="text-pretty">
-                          {line}
-                        </p>
-                      ))}
+                      <p key={`${currentTurn?.id ?? 'turn'}-${activeIndex}`} className="text-pretty">
+                        {revealedLines.at(-1) ?? ''}
+                        {phase === 'typing' ? (
+                          <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-foreground align-[-0.1em]" />
+                        ) : null}
+                      </p>
                     </div>
-                  </ScrollArea>
+                  </div>
                 ) : null}
 
                 {!isStarting && !error && currentLines.length === 0 ? (
@@ -283,7 +475,7 @@ export function PlayPage() {
                 ) : null}
               </div>
 
-              {choiceTool && !isEnded ? (
+              {choiceTool && !isEnded && isComplete ? (
                 <>
                   <Separator />
                   <div className="flex flex-col gap-3">
@@ -310,7 +502,7 @@ export function PlayPage() {
                 </>
               ) : null}
 
-              {isEnded && latestResult?.ending ? (
+              {isEnded && latestResult?.ending && isComplete ? (
                 <>
                   <Separator />
                   <div className="flex items-start gap-3">
@@ -326,7 +518,9 @@ export function PlayPage() {
                 </>
               ) : null}
 
-              <ChevronDown className="absolute bottom-4 right-5 size-5 text-muted-foreground" />
+              {!isStarting && !error && phase === 'waiting' ? (
+                <ChevronDown className="absolute bottom-4 right-5 size-5 animate-bounce text-muted-foreground" />
+              ) : null}
             </section>
           </div>
         </section>
@@ -382,8 +576,72 @@ export function PlayPage() {
           </div>
         </aside>
       </main>
+
+      <Dialog open={isLoadOpen} onOpenChange={setIsLoadOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>读取存档</DialogTitle>
+            <DialogDescription>载入快照会从该存档点新开一条进度，原快照保持不变。</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-y-auto">
+            {snapshots === undefined ? (
+              <div className="flex items-center gap-2 py-6 text-muted-foreground">
+                <Loader2 className="animate-spin size-4" />
+                <span>加载存档...</span>
+              </div>
+            ) : snapshots.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">还没有快照存档，先点左侧「保存快照」。</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {snapshots.map((snapshot) => (
+                  <div key={snapshot.id} className="flex items-start gap-2 rounded-md border bg-card/60 p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{snapshot.label || '未命名存档'}</p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{snapshot.preview || '（无预览）'}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {snapshot.turnCount} 回合 · {formatSaveTime(snapshot.updatedAt)}
+                        {snapshot.state === 'ended' ? ' · 已结束' : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8"
+                        disabled={Boolean(loadBusyId)}
+                        onClick={() => void handleLoadSnapshot(snapshot.id)}
+                      >
+                        {loadBusyId === snapshot.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
+                        载入
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8"
+                        disabled={Boolean(loadBusyId)}
+                        onClick={() => void handleDeleteSnapshot(snapshot.id)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function formatSaveTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString()
 }
 
 function MiniMapPlaceholder() {
