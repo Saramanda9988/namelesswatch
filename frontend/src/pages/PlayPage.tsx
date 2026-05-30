@@ -4,10 +4,10 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
-  Clock3,
   FolderOpen,
   Loader2,
   Map,
+  MessageSquare,
   Moon,
   RefreshCcw,
   Save,
@@ -15,7 +15,7 @@ import {
   Sparkles,
   SunMedium,
   Trash2,
-  Triangle,
+  User,
 } from 'lucide-react'
 import * as React from 'react'
 
@@ -26,7 +26,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useNarrativeReveal } from '@/hooks/use-narrative-reveal'
 import { useGameStore } from '@/stores/game-store'
@@ -61,15 +60,6 @@ function logRuntimeError(message: string) {
   }
 }
 
-const eventMemoryPlaceholders = [
-  'ai引导对话和主人公选择语句',
-  'ai引导对话和主人公选择语句',
-  'ai引导对话和主人公选择语句',
-  'ai引导对话和主人公选择语句',
-  'ai引导对话和主人公选择语句',
-  'ai引导对话和主人公选择语句',
-]
-
 const startGameRequests = new globalThis.Map<string, Promise<roleplay.GameTurnResult>>()
 
 function startGameOnce(game: roleplay.LibraryGame) {
@@ -80,14 +70,17 @@ function startGameOnce(game: roleplay.LibraryGame) {
   }
 
   logRuntimeInfo(`[play] start requested game=${game.id} title=${game.title}`)
-  const request = RegisterGamePack(game.id, game.files)
-    .then(() => StartGame(game.id))
-    .catch((cause) => {
-      if (startGameRequests.get(game.id) === request) {
-        startGameRequests.delete(game.id)
-      }
-      throw cause
-    })
+  const request = RegisterGamePack(game.id, game.files).then(() => StartGame(game.id))
+
+  // Only dedupe concurrent in-flight starts (e.g. React StrictMode's double effect on a
+  // single mount). Once the request settles, drop it so a later visit starts a fresh
+  // session instead of replaying the cached opening turn.
+  const release = () => {
+    if (startGameRequests.get(game.id) === request) {
+      startGameRequests.delete(game.id)
+    }
+  }
+  request.then(release, release)
 
   startGameRequests.set(game.id, request)
   return request
@@ -108,6 +101,9 @@ export function PlayPage() {
   const [sessionId, setSessionId] = React.useState<string>()
   const [latestResult, setLatestResult] = React.useState<roleplay.GameTurnResult>()
   const [turns, setTurns] = React.useState<roleplay.GameTurn[]>([])
+  // Player choices are persisted server-side as user turns, but the live result only
+  // carries the latest AI turn, so we track the labels here to interleave them into history.
+  const [choiceLabels, setChoiceLabels] = React.useState<string[]>([])
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
@@ -146,6 +142,7 @@ export function PlayPage() {
     setIsStarting(true)
     setError(undefined)
     setTurns([])
+    setChoiceLabels([])
     setLatestResult(undefined)
     setSessionId(undefined)
     setActiveSceneId(currentGame.scenes?.[0]?.id)
@@ -199,6 +196,10 @@ export function PlayPage() {
       return
     }
 
+    const chosenLabel
+      = choiceToolFrom(latestResult)?.options.find((option) => option.id === choiceId)?.label
+        ?? choiceId
+
     setPendingChoiceId(choiceId)
     setError(undefined)
     try {
@@ -206,6 +207,7 @@ export function PlayPage() {
       const result = await SubmitChoice(sessionId, choiceId)
       logRuntimeInfo(`[play] choice result session=${sessionId} state=${result.state} tools=${result.tools?.length ?? 0} ending=${Boolean(result.ending)}`)
       setLatestResult(result)
+      setChoiceLabels((current) => [...current, chosenLabel])
       setTurns((currentTurns) => [...currentTurns, result.turn])
       if (result.scene?.id) {
         setActiveSceneId(result.scene.id)
@@ -276,6 +278,7 @@ export function PlayPage() {
       logRuntimeInfo(`[play] loaded snapshot=${snapshotId} session=${result.sessionId}`)
       setSessionId(result.sessionId)
       setLatestResult(result)
+      setChoiceLabels([])
       setTurns(result.turn ? [result.turn] : [])
       setIsLoadOpen(false)
     }
@@ -341,6 +344,33 @@ export function PlayPage() {
       node.scrollTop = node.scrollHeight
     }
   }, [revealedLines.length, activeIndex])
+
+  // Chat history interleaves the player's own choices with the AI narrative turns.
+  // The currently-typing AI turn stays exclusively in the left box and only joins the
+  // history once it is fully revealed; the player's message appears as soon as it is sent.
+  const historyItems = React.useMemo(() => {
+    const items: Array<{ key: string, role: 'ai' | 'user', text: string }> = []
+    renderableTurns.forEach((turn, index) => {
+      const isLatest = index === renderableTurns.length - 1
+      if (!isLatest || isComplete) {
+        items.push({ key: turn.id, role: 'ai', text: turn.payload.join('\n') })
+      }
+      const choice = choiceLabels[index]
+      if (choice) {
+        items.push({ key: `${turn.id}-choice-${index}`, role: 'user', text: choice })
+      }
+    })
+    return items
+  }, [renderableTurns, choiceLabels, isComplete])
+
+  const historyScrollRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const node = historyScrollRef.current
+    if (node) {
+      node.scrollTop = node.scrollHeight
+    }
+  }, [historyItems.length])
 
   const canAdvance = !isStarting && !error && currentLines.length > 0 && !isComplete
 
@@ -547,55 +577,77 @@ export function PlayPage() {
         </section>
 
         <aside className="hidden min-h-0 flex-col border-l bg-background lg:flex">
-          <div className="flex h-full min-h-0 flex-col gap-5 px-4 py-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <Badge variant="outline" className="size-7 justify-center rounded-md p-0">
-                  <Map data-icon />
-                </Badge>
-                <div className="min-w-0">
-                  <h2 className="truncate text-xl font-semibold">地图简览</h2>
-                  <p className="truncate text-xs text-muted-foreground">{game.title}</p>
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex flex-col gap-3 px-4 pt-4 pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Badge variant="outline" className="size-7 justify-center rounded-md p-0">
+                    <Map data-icon />
+                  </Badge>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-lg font-semibold">地图简览</h2>
+                    <p className="truncate text-xs text-muted-foreground">{game.title}</p>
+                  </div>
                 </div>
+                <Button asChild variant="ghost" size="icon-lg" aria-label="设置">
+                  <Link to="/settings">
+                    <Settings data-icon />
+                  </Link>
+                </Button>
               </div>
-              <Button asChild variant="ghost" size="icon-lg" aria-label="设置">
-                <Link to="/settings">
-                  <Settings data-icon />
-                </Link>
-              </Button>
-            </div>
 
-            <AspectRatio ratio={1.54} className="overflow-hidden rounded-md border bg-card">
-              {mapImage ? (
-                <img src={mapImage} alt="" className="size-full object-cover" />
-              ) : (
-                <MiniMapPlaceholder />
-              )}
-            </AspectRatio>
+              <AspectRatio ratio={1.54} className="overflow-hidden rounded-md border bg-card">
+                {mapImage ? (
+                  <img src={mapImage} alt="" className="size-full object-cover" />
+                ) : (
+                  <MiniMapPlaceholder />
+                )}
+              </AspectRatio>
+            </div>
 
             <Separator />
 
-            <section className="flex min-h-0 flex-1 flex-col gap-4">
+            <section className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3 pb-4">
               <div className="flex items-center gap-2">
-                <Triangle className="size-4 fill-current text-muted-foreground" />
-                <h2 className="text-xl font-semibold">事件回忆</h2>
+                <MessageSquare className="size-4 text-muted-foreground" />
+                <h2 className="text-lg font-semibold">聊天记录</h2>
               </div>
               <div className="rounded-md border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
                 当前场景：{activeScene?.name || activeSceneId || '未选择'}
               </div>
-              <div className="rounded-md border bg-card/50 px-3 py-3 text-sm font-medium text-muted-foreground">
-                【场景画外音.................................】
+              <div ref={historyScrollRef} className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-2">
+                {historyItems.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    当前对话完整展示后，会逐条归档到这里。
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-3 pb-2">
+                    {historyItems.map((item) => (
+                      item.role === 'user' ? (
+                        <div key={item.key} className="flex flex-col items-end gap-1.5 pl-6">
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                            <span>我的选择</span>
+                            <User className="size-3.5" />
+                          </div>
+                          <p className="whitespace-pre-line rounded-md rounded-tr-sm bg-primary px-3 py-2 text-sm leading-6 text-primary-foreground">
+                            {item.text}
+                          </p>
+                        </div>
+                      ) : (
+                        <div key={item.key} className="flex flex-col gap-1.5 pr-6">
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                            <Bot className="size-3.5" />
+                            <span>叙事</span>
+                          </div>
+                          <p className="whitespace-pre-line rounded-md rounded-tl-sm border bg-card/50 px-3 py-2 text-sm leading-6 text-foreground/90">
+                            {item.text}
+                          </p>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
               </div>
-              <ScrollArea className="min-h-0 flex-1 pr-3">
-                <div className="flex flex-col gap-4 pb-4">
-                  {eventMemoryPlaceholders.map((item, index) => (
-                    <div key={`${item}-${index}`} className="flex items-start gap-2 text-sm leading-6 text-muted-foreground">
-                      <Clock3 className="mt-1 size-3.5 shrink-0" />
-                      <p>{item}</p>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
             </section>
           </div>
         </aside>
