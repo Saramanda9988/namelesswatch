@@ -35,7 +35,7 @@ export function HomePage() {
     }
 
     return games.filter((game) => {
-      const firstLine = game.script[0]?.text.toLowerCase() || ''
+      const firstLine = (game.files['scene.md'] || game.script[0]?.text || '').toLowerCase()
       return game.title.toLowerCase().includes(keyword) || firstLine.includes(keyword)
     })
   }, [games, search])
@@ -50,14 +50,14 @@ export function HomePage() {
     const report = await importGameFromFiles(selectedFiles)
 
     if (!report.game) {
-      setStatus(`缺少文件：${report.missing.join('、')}`)
+      setStatus(`缺少文件：${report.missing.join('、')}；已识别：${report.validFiles.join('、') || '无'}`)
       setIsImporting(false)
       event.currentTarget.value = ''
       return
     }
 
     addGame(report.game)
-    setStatus(report.warnings.length > 0 ? report.warnings.join(' ') : `已导入：${report.game.title}`)
+    setStatus(report.warnings.length > 0 ? report.warnings.join(' ') : `已导入并验证：${report.game.title}`)
     setIsImporting(false)
     event.currentTarget.value = ''
   }
@@ -147,7 +147,7 @@ export function HomePage() {
                   <CardHeader className="gap-1 px-3 pb-3 pt-3">
                     <CardTitle className="truncate text-lg font-bold text-white">{game.title}</CardTitle>
                     <CardDescription className="truncate text-sm text-[#9ea6b2]">
-                      {game.script[0]?.speaker || 'Imported Script'}
+                      {Object.keys(game.files).filter((name) => name.endsWith('.md')).length} 个剧情文档
                     </CardDescription>
                   </CardHeader>
                 </Card>

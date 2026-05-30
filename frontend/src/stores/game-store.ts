@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import { mockGames } from '@/data/mock-games'
 import type { GameSettings, ImportedGame } from '@/types/game'
 
 type GameState = {
@@ -20,7 +21,7 @@ const initialSettings: GameSettings = {
 }
 
 export const useGameStore = create<GameState>((set) => ({
-  games: [],
+  games: mockGames,
   settings: initialSettings,
   addGame: (game) =>
     set((state) => ({

@@ -1,6 +1,6 @@
 import type { ImportedGame, ImportReport, ScriptLine } from '@/types/game'
 
-const REQUIRED_FILES = ['@endings.md', '@memory.md', '@rule.md', '@scene.md', '@ture.md'] as const
+export const REQUIRED_STORY_FILES = ['scene.md', 'rule.md', 'true.md', 'memory.md', 'endings.md'] as const
 const IMAGE_EXTENSIONS = new Set(['.apng', '.avif', '.gif', '.jpg', '.jpeg', '.png', '.webp'])
 
 function fileNameOf(file: File) {
@@ -55,17 +55,19 @@ export async function importGameFromFiles(fileList: FileList | File[]): Promise<
 
   for (const file of files) {
     const name = fileNameOf(file).toLowerCase()
-    if (REQUIRED_FILES.includes(name as (typeof REQUIRED_FILES)[number])) {
+    if (REQUIRED_STORY_FILES.includes(name as (typeof REQUIRED_STORY_FILES)[number])) {
       markdownFiles.set(name, file)
     }
   }
 
-  const missing = REQUIRED_FILES.filter((fileName) => !markdownFiles.has(fileName))
+  const missing = REQUIRED_STORY_FILES.filter((fileName) => !markdownFiles.has(fileName))
+  const validFiles = REQUIRED_STORY_FILES.filter((fileName) => markdownFiles.has(fileName))
 
   if (missing.length > 0) {
     return {
       missing,
       warnings,
+      validFiles,
     }
   }
 
@@ -90,8 +92,8 @@ export async function importGameFromFiles(fileList: FileList | File[]): Promise<
     warnings.push('map 目录未检测到图片，右上角地图会使用占位图。')
   }
 
-  const script = parseScript(mdContents['@scene.md'] || '', photoUrls)
-  const titleLine = mdContents['@rule.md']?.split('\n').find((line) => line.trim().startsWith('#'))
+  const script = parseScript(mdContents['scene.md'] || '', photoUrls)
+  const titleLine = mdContents['rule.md']?.split('\n').find((line) => line.trim().startsWith('#'))
   const title = titleLine?.replace(/^#+\s*/, '').trim() || titleFromFiles(files)
   const id = `${title}-${Date.now()}`.replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
 
@@ -109,5 +111,6 @@ export async function importGameFromFiles(fileList: FileList | File[]): Promise<
     game,
     missing,
     warnings,
+    validFiles,
   }
 }

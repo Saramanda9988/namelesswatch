@@ -1,158 +1,275 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { ArrowLeft, ChevronRight, MapPinned, RotateCcw, Settings } from 'lucide-react'
+import { ArrowLeft, Bot, CheckCircle2, Loader2, RefreshCcw, Settings, Sparkles } from 'lucide-react'
 import * as React from 'react'
 
-import { AspectRatio } from '@/components/ui/aspect-ratio'
+import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/game-store'
+import type { ChoiceTool, GameTurn, GameTurnResult } from '@/types/game'
+
+function isRenderableTurn(turn: GameTurn) {
+  return turn.role === 'ai' && turn.payload.length > 0
+}
+
+function choiceToolFrom(result?: GameTurnResult): ChoiceTool | undefined {
+  if (!result || result.state === 'ended') {
+    return undefined
+  }
+  return result.tools?.find((tool) => tool.type === 'choice')
+}
 
 export function PlayPage() {
   const { gameId } = useParams({ from: '/play/$gameId' })
   const navigate = useNavigate()
   const games = useGameStore((state) => state.games)
-  const settings = useGameStore((state) => state.settings)
   const setActiveGame = useGameStore((state) => state.setActiveGame)
-  const [lineIndex, setLineIndex] = React.useState(0)
-
   const game = games.find((item) => item.id === gameId)
-  const currentLine = game?.script[lineIndex]
-  const currentMap = game?.mapUrls[lineIndex % Math.max(game.mapUrls.length, 1)]
+  const [sessionId, setSessionId] = React.useState<string>()
+  const [latestResult, setLatestResult] = React.useState<GameTurnResult>()
+  const [turns, setTurns] = React.useState<GameTurn[]>([])
+  const [error, setError] = React.useState<string>()
+  const [isStarting, setIsStarting] = React.useState(true)
+  const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
+  const startedGameIdRef = React.useRef<string | undefined>(undefined)
 
   React.useEffect(() => {
-    if (game) {
-      setActiveGame(game.id)
+    if (!game) {
+      return
     }
+    setActiveGame(game.id)
   }, [game, setActiveGame])
 
   React.useEffect(() => {
-    if (!settings.autoAdvance || !game) {
+    if (!game || startedGameIdRef.current === game.id) {
       return
     }
 
-    const timeout = window.setTimeout(() => {
-      setLineIndex((index) => Math.min(index + 1, Math.max(game.script.length - 1, 0)))
-    }, 3200)
+    let cancelled = false
+    const currentGame = game
+    startedGameIdRef.current = game.id
+    setIsStarting(true)
+    setError(undefined)
+    setTurns([])
+    setLatestResult(undefined)
+    setSessionId(undefined)
 
-    return () => window.clearTimeout(timeout)
-  }, [game, lineIndex, settings.autoAdvance])
+    async function start() {
+      try {
+        await RegisterGamePack(currentGame.id, currentGame.files)
+        const result = await StartGame(currentGame.id) as GameTurnResult
+        if (cancelled) {
+          return
+        }
+        setSessionId(result.sessionId)
+        setLatestResult(result)
+        setTurns([result.turn])
+      }
+      catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      }
+      finally {
+        if (!cancelled) {
+          setIsStarting(false)
+        }
+      }
+    }
 
-  function advance() {
-    if (!game) {
-      void navigate({ to: '/' })
+    void start()
+
+    return () => {
+      cancelled = true
+    }
+  }, [game])
+
+  async function submitChoice(choiceId: string) {
+    if (!sessionId || pendingChoiceId || latestResult?.state === 'ended') {
       return
     }
 
-    setLineIndex((index) => Math.min(index + 1, Math.max(game.script.length - 1, 0)))
+    setPendingChoiceId(choiceId)
+    setError(undefined)
+    try {
+      const result = await SubmitChoice(sessionId, choiceId) as GameTurnResult
+      setLatestResult(result)
+      setTurns((currentTurns) => [...currentTurns, result.turn])
+    }
+    catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setPendingChoiceId(undefined)
+    }
   }
+
+  const renderableTurns = React.useMemo(() => turns.filter(isRenderableTurn), [turns])
+  const choiceTool = choiceToolFrom(latestResult)
+  const isEnded = latestResult?.state === 'ended'
 
   if (!game) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[#10130f] p-6 text-[#efe8d3]">
-        <div className="max-w-sm border border-[#efe8d3]/18 bg-[#0d100d] p-6 text-center">
-          <h1 className="text-2xl font-semibold">未找到游戏</h1>
-          <Button asChild className="mt-5 rounded-none bg-[#d2a84f] text-[#171307] hover:bg-[#efc767]">
-            <Link to="/">返回主页</Link>
-          </Button>
-        </div>
+      <div className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
+        <Card className="w-full max-w-sm text-center">
+          <CardHeader>
+            <CardTitle>未找到游戏</CardTitle>
+            <CardDescription>这个剧情包不存在或已经被移除。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link to="/">返回主页</Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
   return (
-    <div className="relative h-screen overflow-hidden bg-[#090b09] text-[#f7f0dd]">
-      {currentLine?.backgroundUrl ? (
-        <img src={currentLine.backgroundUrl} alt="" className="absolute inset-0 size-full object-cover" />
-      ) : (
-        <div className="absolute inset-0 bg-[linear-gradient(125deg,#151f19,#332117_48%,#0a0c0a)]" />
-      )}
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,4,3,0.22),rgba(3,4,3,0.18)_43%,rgba(3,4,3,0.78))]" />
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b bg-card">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-3 px-4 md:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button asChild variant="ghost" size="icon" aria-label="返回">
+              <Link to="/">
+                <ArrowLeft data-icon />
+              </Link>
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{game.title}</p>
+              <p className="text-xs text-muted-foreground">{sessionId ? `Session ${sessionId.slice(-6)}` : '准备会话'}</p>
+            </div>
+          </div>
 
-      <header className="absolute left-4 right-4 top-4 z-10 flex items-start justify-between gap-4">
-        <div className="flex gap-2">
-          <Button asChild variant="outline" className="rounded-none border-white/20 bg-black/32 text-white backdrop-blur hover:bg-white/12">
-            <Link to="/">
-              <ArrowLeft className="size-4" />
-              主页
-            </Link>
-          </Button>
-          <Button asChild variant="outline" className="rounded-none border-white/20 bg-black/32 text-white backdrop-blur hover:bg-white/12">
-            <Link to="/settings">
-              <Settings className="size-4" />
-              设置
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Badge variant={isEnded ? 'default' : 'secondary'}>
+              {isEnded ? '已结束' : 'AI 主持'}
+            </Badge>
+            <Button asChild variant="ghost" size="icon" aria-label="设置">
+              <Link to="/settings">
+                <Settings data-icon />
+              </Link>
+            </Button>
+          </div>
         </div>
-
-        {settings.showMap && (
-          <Card className="w-28 rounded-none border-[#d2a84f]/45 bg-black/45 p-1 shadow-2xl backdrop-blur md:w-44">
-            <AspectRatio ratio={1} className="relative overflow-hidden bg-[#151c16]">
-              {currentMap ? (
-                <img src={currentMap} alt="" className="size-full object-cover" />
-              ) : (
-                <div className="grid size-full place-items-center bg-[linear-gradient(135deg,#1d2c25,#3a281b)] text-[#d2a84f]">
-                  <MapPinned className="size-8" />
-                </div>
-              )}
-              <Badge variant="outline" className="absolute left-2 top-2 rounded-none border-[#d2a84f]/50 bg-black/55 text-[10px] uppercase tracking-[0.22em] text-[#f2d37b]">
-                Map
-              </Badge>
-            </AspectRatio>
-          </Card>
-        )}
       </header>
 
-      <section
-        className="absolute inset-x-3 bottom-3 z-10 md:inset-x-8 md:bottom-7"
-        style={{ transform: `scale(${settings.uiScale / 100})`, transformOrigin: 'bottom center' }}
-      >
-        <Card
-          role="button"
-          tabIndex={0}
-          aria-label="推进文本"
-          onClick={advance}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              advance()
-            }
-          }}
-          className="w-full cursor-pointer rounded-none border-[#d2a84f]/35 bg-[#0b0d0b]/82 p-0 text-left text-[#f7f0dd] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-md"
-        >
-          <CardHeader className="flex-row items-center justify-between gap-3 p-4 pb-0 md:p-6 md:pb-0">
-            <CardTitle className="border-l-4 border-[#c2341c] pl-3 text-lg font-semibold text-[#fff6dd] md:text-xl">
-              {currentLine?.speaker || '旁白'}
-            </CardTitle>
-            <Badge variant="ghost" className="rounded-none text-xs tabular-nums text-[#efe8d3]/48">
-              {Math.min(lineIndex + 1, game.script.length)} / {game.script.length}
-            </Badge>
-          </CardHeader>
+      <main className="mx-auto grid h-[calc(100vh-3.5rem)] w-full max-w-6xl grid-rows-[1fr_auto] px-4 py-4 md:px-6">
+        <ScrollArea className="min-h-0 pr-3">
+          <div className="flex flex-col gap-4 pb-6">
+            {isStarting ? (
+              <Card>
+                <CardHeader className="flex-row items-center gap-3">
+                  <Loader2 className="animate-spin" data-icon />
+                  <div>
+                    <CardTitle className="text-base">正在生成首回合</CardTitle>
+                    <CardDescription>后端会创建独立 workspace，并把剧情文档复制到当前会话。</CardDescription>
+                  </div>
+                </CardHeader>
+              </Card>
+            ) : null}
 
-          <CardContent className="p-4 md:p-6">
-            <p className="min-h-20 text-pretty text-base leading-8 text-[#efe8d3] md:min-h-24 md:text-xl md:leading-9">
-              {currentLine?.text || '场景文件为空。'}
-            </p>
-          </CardContent>
+            {error ? (
+              <Card className="border-destructive/40">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                    <RefreshCcw data-icon />
+                    会话暂不可用
+                  </CardTitle>
+                  <CardDescription className="break-words">{error}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button type="button" variant="outline" onClick={() => void navigate({ to: '/' })}>
+                    返回游戏库
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
 
-          <CardFooter className="flex items-center justify-between rounded-none border-white/10 bg-white/[0.03] p-4 pt-3 text-xs text-[#efe8d3]/48 md:px-6">
-            <span>{game.title}</span>
-            <span className="flex items-center gap-2">
-              {lineIndex >= game.script.length - 1 ? (
-                <>
-                  <RotateCcw className="size-3.5" />
-                  终章
-                </>
-              ) : (
-                <>
-                  <ChevronRight className="size-3.5" />
-                  下一段
-                </>
-              )}
-            </span>
-          </CardFooter>
-        </Card>
-      </section>
+            {renderableTurns.map((turn, index) => (
+              <section key={turn.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="size-8 justify-center rounded-full p-0">
+                      <Bot data-icon />
+                    </Badge>
+                    <div>
+                      <p className="text-sm font-medium">回合 {index + 1}</p>
+                      <p className="text-xs text-muted-foreground">AI 叙事输出</p>
+                    </div>
+                  </div>
+                  {turn.ending ? (
+                    <Badge>
+                      <CheckCircle2 data-icon />
+                      {turn.ending.kind}
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-3 text-base leading-7">
+                  {turn.payload.map((line, lineIndex) => (
+                    <p key={`${turn.id}-${lineIndex}`} className="text-pretty">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+                {turn.ending ? (
+                  <>
+                    <Separator />
+                    <div className="flex flex-col gap-1">
+                      <p className="text-sm font-medium">{turn.ending.title}</p>
+                      <p className="text-xs text-muted-foreground">Ending ID: {turn.ending.id}</p>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            ))}
+          </div>
+        </ScrollArea>
+
+        <section className="border-t bg-background pt-4">
+          {choiceTool && !isEnded ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Sparkles data-icon />
+                <span>{choiceTool.prompt || '你要怎么做？'}</span>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                {choiceTool.options.map((option) => (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant="outline"
+                    className="h-auto justify-start whitespace-normal py-3 text-left"
+                    disabled={Boolean(pendingChoiceId)}
+                    onClick={() => void submitChoice(option.id)}
+                  >
+                    {pendingChoiceId === option.id ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {isEnded && latestResult?.ending ? (
+            <div className="flex flex-col gap-2 rounded-lg border bg-card p-4">
+              <Badge className="w-fit">
+                <CheckCircle2 data-icon />
+                结局
+              </Badge>
+              <div>
+                <p className="font-medium">{latestResult.ending.title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">普通推进已停止。</p>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      </main>
     </div>
   )
 }

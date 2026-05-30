@@ -1,0 +1,230 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+)
+
+const (
+	SessionStateIdle    = "idle"
+	SessionStatePlaying = "playing"
+	SessionStateEnded   = "ended"
+	TurnRoleAI          = "ai"
+	TurnRoleUser        = "user"
+)
+
+var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md", "endings.md"}
+
+type StoryPack struct {
+	ID    string            `json:"id"`
+	Files map[string]string `json:"files"`
+}
+
+type GameSession struct {
+	ID            string     `json:"id"`
+	GameID        string     `json:"gameId"`
+	State         string     `json:"state"`
+	WorkspacePath string     `json:"workspacePath"`
+	MemoryPath    string     `json:"memoryPath"`
+	Turns         []GameTurn `json:"turns"`
+	CreatedAt     string     `json:"createdAt"`
+	UpdatedAt     string     `json:"updatedAt"`
+}
+
+type GameTurn struct {
+	ID                  string       `json:"id"`
+	Role                string       `json:"role"`
+	Payload             []string     `json:"payload"`
+	SelectedChoiceID    string       `json:"selectedChoiceId,omitempty"`
+	SelectedChoiceLabel string       `json:"selectedChoiceLabel,omitempty"`
+	Tools               []ChoiceTool `json:"tools,omitempty"`
+	Ending              *Ending      `json:"ending,omitempty"`
+	CreatedAt           string       `json:"createdAt"`
+}
+
+type GameTurnResult struct {
+	SessionID string       `json:"sessionId"`
+	GameID    string       `json:"gameId"`
+	State     string       `json:"state"`
+	Payload   []string     `json:"payload"`
+	Tools     []ChoiceTool `json:"tools"`
+	Ending    *Ending      `json:"ending,omitempty"`
+	Turn      GameTurn     `json:"turn"`
+}
+
+type ChoiceTool struct {
+	Type    string         `json:"type"`
+	ID      string         `json:"id"`
+	Prompt  string         `json:"prompt,omitempty"`
+	Options []ChoiceOption `json:"options"`
+}
+
+type ChoiceOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type Ending struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Kind  string `json:"kind"`
+}
+
+type AgentTerminalRequest struct {
+	Type     string            `json:"type"`
+	Reason   string            `json:"reason"`
+	Commands []TerminalCommand `json:"commands"`
+}
+
+type TerminalCommand struct {
+	Command string `json:"command"`
+}
+
+type TerminalExecution struct {
+	Command     string `json:"command"`
+	Stdout      string `json:"stdout"`
+	Stderr      string `json:"stderr"`
+	ExitCode    int    `json:"exitCode"`
+	DurationMS  int64  `json:"durationMs"`
+	TimedOut    bool   `json:"timedOut"`
+	Truncated   bool   `json:"truncated"`
+	Error       string `json:"error,omitempty"`
+	CompletedAt string `json:"completedAt"`
+}
+
+func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
+	normalized := make(map[string]string, len(files))
+	for name, content := range files {
+		normalized[strings.ToLower(filepath.Base(strings.ReplaceAll(name, "\\", "/")))] = content
+	}
+
+	var missing []string
+	for _, fileName := range RequiredStoryFiles {
+		if _, ok := normalized[fileName]; !ok {
+			missing = append(missing, fileName)
+		}
+	}
+	if len(missing) > 0 {
+		return StoryPack{}, fmt.Errorf("missing story pack files: %s", strings.Join(missing, ", "))
+	}
+
+	return StoryPack{
+		ID:    gameID,
+		Files: normalized,
+	}, nil
+}
+
+func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {
+	workspace, err := os.MkdirTemp("", "namelesswatch-session-*")
+	if err != nil {
+		return nil, fmt.Errorf("create session workspace: %w", err)
+	}
+
+	for _, fileName := range RequiredStoryFiles {
+		if err := os.WriteFile(filepath.Join(workspace, fileName), []byte(pack.Files[fileName]), 0o600); err != nil {
+			return nil, fmt.Errorf("copy %s to session workspace: %w", fileName, err)
+		}
+	}
+
+	now := NowISO()
+	return &GameSession{
+		ID:            NewID("session"),
+		GameID:        gameID,
+		State:         SessionStatePlaying,
+		WorkspacePath: workspace,
+		MemoryPath:    filepath.Join(workspace, "memory.md"),
+		Turns:         []GameTurn{},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}, nil
+}
+
+func (s *GameSession) AppendTurn(turn GameTurn) {
+	s.Turns = append(s.Turns, turn)
+	s.UpdatedAt = NowISO()
+	if turn.Role == TurnRoleAI && turn.Ending != nil {
+		s.State = SessionStateEnded
+	}
+}
+
+func (s *GameSession) ChoiceLabel(choiceID string) string {
+	for i := len(s.Turns) - 1; i >= 0; i-- {
+		turn := s.Turns[i]
+		if turn.Role != TurnRoleAI {
+			continue
+		}
+		for _, tool := range turn.Tools {
+			for _, option := range tool.Options {
+				if option.ID == choiceID {
+					return option.Label
+				}
+			}
+		}
+		break
+	}
+	return choiceID
+}
+
+func (s *GameSession) Clone() GameSession {
+	turns := slices.Clone(s.Turns)
+	return GameSession{
+		ID:            s.ID,
+		GameID:        s.GameID,
+		State:         s.State,
+		WorkspacePath: s.WorkspacePath,
+		MemoryPath:    s.MemoryPath,
+		Turns:         turns,
+		CreatedAt:     s.CreatedAt,
+		UpdatedAt:     s.UpdatedAt,
+	}
+}
+
+func ResultFromSession(session *GameSession) GameTurnResult {
+	var last GameTurn
+	for i := len(session.Turns) - 1; i >= 0; i-- {
+		if session.Turns[i].Role == TurnRoleAI {
+			last = session.Turns[i]
+			break
+		}
+	}
+
+	return GameTurnResult{
+		SessionID: session.ID,
+		GameID:    session.GameID,
+		State:     session.State,
+		Payload:   last.Payload,
+		Tools:     last.Tools,
+		Ending:    last.Ending,
+		Turn:      last,
+	}
+}
+
+func NewID(prefix string) string {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	}
+	return prefix + "-" + hex.EncodeToString(bytes[:])
+}
+
+func NowISO() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func ReadWorkspaceFile(session *GameSession, fileName string) (string, error) {
+	if !slices.Contains(RequiredStoryFiles, fileName) {
+		return "", errors.New("unsupported story file")
+	}
+	content, err := os.ReadFile(filepath.Join(session.WorkspacePath, fileName))
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
