@@ -1,5 +1,4 @@
-import { Link } from '@tanstack/react-router'
-import { Bot, Map, MessageSquare, Settings, User, X } from 'lucide-react'
+import { Bot, Map, MessageSquare, User, X } from 'lucide-react'
 import * as React from 'react'
 
 import { AspectRatio } from '@/components/ui/aspect-ratio'
@@ -133,26 +132,17 @@ function SidebarContent({
       <div className="flex flex-col gap-3 px-4 pt-4 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Badge variant="outline" className="size-7 justify-center rounded-md p-0">
-              <Map data-icon />
-            </Badge>
             <div className="min-w-0">
               <h2 className="truncate text-lg font-semibold">地图简览</h2>
-              <p className="truncate text-xs text-muted-foreground">{gameTitle}</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button asChild variant="ghost" size="icon-lg" aria-label="设置">
-              <Link to="/settings">
-                <Settings data-icon />
-              </Link>
-            </Button>
-            {showCloseButton ? (
+          {showCloseButton ? (
+            <div className="flex shrink-0 items-center gap-1">
               <Button type="button" variant="ghost" size="icon-lg" aria-label="关闭侧栏" title="关闭侧栏" onClick={onClose}>
                 <X data-icon />
               </Button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
 
         {mapImage ? (
@@ -187,7 +177,6 @@ function SidebarContent({
 
       <section className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3 pb-4">
         <div className="flex items-center gap-2">
-          <MessageSquare className="size-4 text-muted-foreground" />
           <h2 className="text-lg font-semibold">聊天记录</h2>
         </div>
         <div className="rounded-md border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
@@ -203,20 +192,12 @@ function SidebarContent({
               {historyItems.map((item) => (
                 item.role === 'user' ? (
                   <div key={item.key} className="flex flex-col items-end gap-1.5 pl-6">
-                    <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      <span>我的选择</span>
-                      <User className="size-3.5" />
-                    </div>
                     <p className="whitespace-pre-line rounded-md rounded-tr-sm bg-primary px-3 py-2 text-sm leading-6 text-primary-foreground">
                       {item.text}
                     </p>
                   </div>
                 ) : (
                   <div key={item.key} className="flex flex-col gap-1.5 pr-6">
-                    <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      <Bot className="size-3.5" />
-                      <span>叙事</span>
-                    </div>
                     <p className="whitespace-pre-line rounded-md rounded-tl-sm border bg-card/50 px-3 py-2 text-sm leading-6 text-foreground/90">
                       {item.text}
                     </p>

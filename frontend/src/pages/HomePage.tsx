@@ -165,19 +165,13 @@ export function HomePage() {
       <header className="sticky top-0 z-20 border-b border-[#2b3037] bg-[#1a1d20]">
         <div className="flex h-16 items-center justify-between px-5 md:px-8">
           <Link to="/" className="flex items-center gap-3">
-            <Badge variant="outline" className="grid size-10 place-items-center rounded-xl border-[#596170] bg-[#23272d] p-0 text-[#dce2ea]">
-              <BookOpen className="size-5" />
-            </Badge>
             <div>
-              <div className="text-lg font-semibold leading-none">LunaBox</div>
+              <div className="text-lg font-semibold leading-none">NamelessWatch</div>
               <div className="mt-1 text-xs text-[#a8b0bd]">AI Roleplay Library</div>
             </div>
           </Link>
 
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="hidden h-9 rounded-md border-[#343a43] bg-[#111315] px-3 text-[#a8b0bd] md:inline-flex">
-              {status}
-            </Badge>
             <Button
               type="button"
               className="h-10 rounded-lg bg-[#59677e] px-4 text-white hover:bg-[#6b7b94]"
@@ -223,10 +217,10 @@ export function HomePage() {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(188px,1fr))] gap-5 pb-8">
               {visibleGames.map((game) => (
-                <Card key={game.id} className="group overflow-hidden rounded-xl border-[#343a43] bg-[#1a1d20] p-0 text-[#f4f5f7] transition-colors hover:border-[#59677e]">
-                  <AspectRatio ratio={0.74} className="relative bg-[#22262b]">
+                <Card key={game.id} className="group relative isolate overflow-hidden rounded-xl border-[#343a43] bg-[#1a1d20] p-0 text-[#f4f5f7] transition-colors hover:border-[#59677e]">
+                  <AspectRatio ratio={0.74} className="relative overflow-hidden bg-[#22262b]">
                     {game.photoUrls?.[0] ? (
-                      <img src={game.photoUrls[0]} alt="" className="size-full object-cover transition duration-300 group-hover:scale-105" />
+                      <img src={game.photoUrls[0]} alt="" className="block size-full origin-center object-cover transition-transform duration-300 ease-out will-change-transform group-hover:scale-105" />
                     ) : (
                       <div className="grid size-full place-items-center bg-[#23272d] text-[#596170]">
                         <Gamepad2 className="size-12" />
@@ -272,11 +266,8 @@ export function HomePage() {
                     </Button>
                   </AspectRatio>
 
-                  <CardHeader className="gap-1 px-3 pb-3 pt-3">
+                  <CardHeader className="relative z-10 gap-1 bg-[#1a1d20] px-3 pb-3 pt-3">
                     <CardTitle className="truncate text-lg font-bold text-white">{game.title}</CardTitle>
-                    <CardDescription className="truncate text-sm text-[#9ea6b2]">
-                      {Object.keys(game.files).filter((name) => name.endsWith('.md')).length} 个剧情文档
-                    </CardDescription>
                   </CardHeader>
                 </Card>
               ))}
