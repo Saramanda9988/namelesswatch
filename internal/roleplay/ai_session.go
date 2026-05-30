@@ -15,6 +15,14 @@ const maxTerminalRounds = 3
 
 type TurnLogger func(format string, args ...interface{})
 
+type AITurnOptions struct {
+	ContextBudget ContextBudget
+}
+
+func DefaultAITurnOptions() AITurnOptions {
+	return AITurnOptions{ContextBudget: DefaultContextBudget()}
+}
+
 const gameHostInstructions = `你是一个规则怪谈的主持人，请遵守以下规则，和用户进行一次规则怪谈的游玩
 
 1. 故事的开头大纲在 scene.md 中，故事结局在 endings.md 
@@ -28,11 +36,21 @@ func RunAITurn(ctx context.Context, client ChatCompleter, pack StoryPack, sessio
 }
 
 func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, logf TurnLogger) (GameTurnResult, error) {
+	return RunAITurnWithOptions(ctx, client, pack, session, DefaultAITurnOptions(), logf)
+}
+
+func RunAITurnWithOptions(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, options AITurnOptions, logf TurnLogger) (GameTurnResult, error) {
+	options.ContextBudget = normalizeContextBudget(options.ContextBudget)
 	var terminalResults []TerminalExecution
 
 	for terminalRound := 0; terminalRound <= maxTerminalRounds; terminalRound++ {
 		logTurn(logf, "ai_turn start game=%s session=%s round=%d prior_turns=%d terminal_results=%d", pack.ID, session.ID, terminalRound, len(session.Turns), len(terminalResults))
-		content, err := client.Chat(ctx, BuildMessages(pack, session, terminalResults, ""))
+		messages, err := buildMessagesForAITurn(ctx, client, pack, session, terminalResults, "", options, logf)
+		if err != nil {
+			logTurn(logf, "ai_turn context_error game=%s session=%s round=%d error=%v", pack.ID, session.ID, terminalRound, err)
+			return GameTurnResult{}, err
+		}
+		content, err := client.Chat(ctx, messages)
 		if err != nil {
 			logTurn(logf, "ai_turn chat_error game=%s session=%s round=%d error=%v", pack.ID, session.ID, terminalRound, err)
 			return GameTurnResult{}, err
@@ -60,7 +78,7 @@ func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPa
 			if validationErr == nil {
 				validationErr = ValidateGameTurnForSession(*response, session, pack)
 			}
-			repaired, repairErr := repairGameTurn(ctx, client, pack, session, terminalResults, content, validationErr, logf)
+			repaired, repairErr := repairGameTurn(ctx, client, pack, session, terminalResults, content, validationErr, options, logf)
 			if repairErr == nil {
 				logTurn(logf, "ai_turn repaired game=%s session=%s state=%s payload_lines=%d tools=%d ending=%s", pack.ID, session.ID, repaired.State, len(repaired.Payload), len(repaired.Tools), endingTitle(repaired.Ending))
 				return appendAITurn(session, *repaired), nil
@@ -90,9 +108,13 @@ func RunAITurnWithLogger(ctx context.Context, client ChatCompleter, pack StoryPa
 	return appendAITurn(session, FallbackTurn()), nil
 }
 
-func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, terminalResults []TerminalExecution, raw string, validationErr error, logf TurnLogger) (*AITurnResponse, error) {
+func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, terminalResults []TerminalExecution, raw string, validationErr error, options AITurnOptions, logf TurnLogger) (*AITurnResponse, error) {
 	repairInstruction := fmt.Sprintf("上一次模型响应不合规：%s\n原始响应：\n%s\n请只返回一个修正后的 game_turn JSON，不要返回 agent_terminal。", validationErr.Error(), raw)
-	content, err := client.Chat(ctx, BuildMessages(pack, session, terminalResults, repairInstruction))
+	messages, err := buildMessagesForAITurn(ctx, client, pack, session, terminalResults, repairInstruction, options, logf)
+	if err != nil {
+		return nil, err
+	}
+	content, err := client.Chat(ctx, messages)
 	if err != nil {
 		logTurn(logf, "ai_turn repair_chat_error game=%s session=%s error=%v", pack.ID, session.ID, err)
 		return nil, err
@@ -115,21 +137,52 @@ func repairGameTurn(ctx context.Context, client ChatCompleter, pack StoryPack, s
 	return response, nil
 }
 
+func buildMessagesForAITurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession, terminalResults []TerminalExecution, repairInstruction string, options AITurnOptions, logf TurnLogger) ([]ChatMessage, error) {
+	budget := normalizeContextBudget(options.ContextBudget)
+	messages := BuildMessagesWithBudget(pack, session, terminalResults, repairInstruction, budget)
+	if EstimatePromptRunes(messages) <= budget.HardPromptRuneBudget {
+		return messages, nil
+	}
+
+	if err := CompactSessionContext(ctx, client, session, budget, logf); err != nil {
+		logTurn(logf, "ai_turn compact_before_prompt_failed game=%s session=%s error=%v", pack.ID, session.ID, err)
+	}
+	messages = BuildMessagesWithBudget(pack, session, terminalResults, repairInstruction, budget)
+	promptRunes := EstimatePromptRunes(messages)
+	if promptRunes > budget.HardPromptRuneBudget {
+		return nil, fmt.Errorf("AI prompt exceeds hard budget: %d > %d", promptRunes, budget.HardPromptRuneBudget)
+	}
+	return messages, nil
+}
+
 func BuildMessages(pack StoryPack, session *GameSession, terminalResults []TerminalExecution, repairInstruction string) []ChatMessage {
+	return BuildMessagesWithBudget(pack, session, terminalResults, repairInstruction, DefaultContextBudget())
+}
+
+func BuildMessagesWithBudget(pack StoryPack, session *GameSession, terminalResults []TerminalExecution, repairInstruction string, budget ContextBudget) []ChatMessage {
+	budget = normalizeContextBudget(budget)
 	memory, err := ReadWorkspaceFile(session, "memory.md")
 	if err != nil {
 		memory = pack.Files["memory.md"]
 	}
+	memory = limitRunes(memory, budget.MemoryRuneBudget)
+	contextSummary, err := ReadContextSummary(session)
+	if err != nil {
+		contextSummary = DefaultContextSummary()
+	}
+	contextSummary = limitRunes(contextSummary, budget.SummaryRuneBudget)
 
 	var builder strings.Builder
 	builder.WriteString("Story Pack:\n")
 	for _, fileName := range []string{"scene.md", "rule.md", "true.md", "endings.md"} {
 		builder.WriteString("\n--- " + fileName + " ---\n")
-		builder.WriteString(promptStoryFile(pack, session, fileName))
+		builder.WriteString(limitRunes(promptStoryFile(pack, session, fileName), budget.StoryFileRuneBudget))
 		builder.WriteString("\n")
 	}
 	builder.WriteString("\n--- current memory.md ---\n")
 	builder.WriteString(memory)
+	builder.WriteString("\n\n--- context_summary.md ---\n")
+	builder.WriteString(contextSummary)
 	builder.WriteString("\n\nAvailable Scenes:\n")
 	if len(pack.Scenes) == 0 {
 		builder.WriteString("- none\n")
@@ -170,14 +223,8 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 		}
 	}
 	builder.WriteString("\n\nRecent Turns:\n")
-	for _, turn := range recentTurns(session.Turns, 12) {
-		builder.WriteString(fmt.Sprintf("- %s: %s", turn.Role, strings.Join(turn.Payload, " / ")))
-		if turn.SelectedChoiceID != "" {
-			builder.WriteString(fmt.Sprintf(" (choice: %s - %s)", turn.SelectedChoiceID, turn.SelectedChoiceLabel))
-		}
-		if turn.Ending != nil {
-			builder.WriteString(fmt.Sprintf(" (ending: %s)", turn.Ending.Title))
-		}
+	for _, turn := range recentTurns(session.Turns, budget.RecentTurnLimit) {
+		builder.WriteString(formatTurnForPrompt(turn))
 		builder.WriteString("\n")
 	}
 	if len(session.Turns) == 0 {
@@ -188,13 +235,14 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 		builder.WriteString("\nMandatory Rule Review After User Choice:\n")
 		builder.WriteString("最近一回合是用户通过 choice 工具做出的选择。生成任何 game_turn 之前，必须先重新阅读并逐条对照以下最新 rule.md：场景描写、后果触发、可用选项、场景切换、结局判定都不得偏离规则；如果当前剧情与规则冲突，必须以 rule.md 为准修正。\n")
 		builder.WriteString("\n--- rule.md (fresh read) ---\n")
-		builder.WriteString(promptStoryFile(pack, session, "rule.md"))
+		builder.WriteString(limitRunes(promptStoryFile(pack, session, "rule.md"), budget.StoryFileRuneBudget))
 		builder.WriteString("\n")
 	}
 
 	if len(terminalResults) > 0 {
 		builder.WriteString("\nTerminal Results:\n")
 		for _, result := range terminalResults {
+			result = limitedTerminalExecution(result, budget.TerminalResultRunes)
 			encoded, _ := json.Marshal(result)
 			builder.Write(encoded)
 			builder.WriteString("\n")
@@ -202,7 +250,7 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	}
 	if repairInstruction != "" {
 		builder.WriteString("\nRepair Instruction:\n")
-		builder.WriteString(repairInstruction)
+		builder.WriteString(limitRunes(repairInstruction, budget.RepairInstructionRunes))
 		builder.WriteString("\n")
 	}
 
@@ -210,6 +258,33 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 		{Role: "system", Content: BuildSystemPrompt()},
 		{Role: "user", Content: builder.String()},
 	}
+}
+
+func formatTurnForPrompt(turn GameTurn) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("- %s: %s", turn.Role, strings.Join(turn.Payload, " / ")))
+	if turn.SelectedChoiceID != "" {
+		builder.WriteString(fmt.Sprintf(" (choice: %s - %s)", turn.SelectedChoiceID, turn.SelectedChoiceLabel))
+	}
+	if turn.Scene != nil {
+		builder.WriteString(fmt.Sprintf(" (scene: %s)", turn.Scene.ID))
+	}
+	if turn.BGM != nil {
+		builder.WriteString(fmt.Sprintf(" (bgm: %s %s)", turn.BGM.Action, turn.BGM.ID))
+	}
+	if turn.Ending != nil {
+		builder.WriteString(fmt.Sprintf(" (ending: %s)", turn.Ending.Title))
+	}
+	return builder.String()
+}
+
+func limitedTerminalExecution(result TerminalExecution, limit int) TerminalExecution {
+	result.Stdout = limitRunes(result.Stdout, limit)
+	result.Stderr = limitRunes(result.Stderr, limit)
+	if strings.Contains(result.Stdout, "[truncated]") || strings.Contains(result.Stderr, "[truncated]") {
+		result.Truncated = true
+	}
+	return result
 }
 
 func BuildSystemPrompt() string {

@@ -311,6 +311,9 @@ func newGameSessionWithWorkspace(sessionID, gameID string, pack StoryPack, works
 			return nil, fmt.Errorf("copy %s to session workspace: %w", fileName, err)
 		}
 	}
+	if err := EnsureContextSummary(&GameSession{WorkspacePath: workspace}); err != nil {
+		return nil, err
+	}
 
 	now := NowISO()
 	currentSceneID := ""
@@ -355,6 +358,18 @@ func (s *GameSession) ChoiceLabel(choiceID string) string {
 		break
 	}
 	return choiceID
+}
+
+func (s *GameSession) LatestAITurn() (GameTurn, bool) {
+	if s == nil {
+		return GameTurn{}, false
+	}
+	for i := len(s.Turns) - 1; i >= 0; i-- {
+		if s.Turns[i].Role == TurnRoleAI {
+			return s.Turns[i], true
+		}
+	}
+	return GameTurn{}, false
 }
 
 func (s *GameSession) Clone() GameSession {

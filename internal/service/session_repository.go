@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 const sessionFileVersion = 1
@@ -126,8 +127,17 @@ func (r *sessionRepository) delete(sessionID string) error {
 	if sessionID == "" {
 		return errors.New("session id is required")
 	}
+	var workspace string
+	if session, err := r.load(sessionID); err == nil {
+		workspace = session.WorkspacePath
+	}
 	if err := os.RemoveAll(r.sessionDir(sessionID)); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	if workspace != "" && pathIsWithinRoot(workspace, r.root) {
+		if err := os.RemoveAll(workspace); err != nil {
+			return fmt.Errorf("delete session workspace: %w", err)
+		}
 	}
 	return nil
 }
@@ -228,4 +238,20 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func pathIsWithinRoot(value, root string) bool {
+	absValue, err := filepath.Abs(value)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absValue)
+	if err != nil || rel == "." {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }

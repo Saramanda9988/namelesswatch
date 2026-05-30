@@ -5,6 +5,15 @@ export namespace appconf {
 	    ai_base_url: string;
 	    ai_model: string;
 	    ai_token?: string;
+	    ai_context_recent_turns: number;
+	    ai_context_compact_turns: number;
+	    ai_context_soft_budget: number;
+	    ai_context_hard_budget: number;
+	    ai_choice_prefetch_enabled: boolean;
+	    ai_choice_prefetch_global_concurrency: number;
+	    ai_choice_prefetch_session_concurrency: number;
+	    ai_choice_prefetch_ttl_ms: number;
+	    ai_choice_prefetch_wait_ms: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);
@@ -16,6 +25,15 @@ export namespace appconf {
 	        this.ai_base_url = source["ai_base_url"];
 	        this.ai_model = source["ai_model"];
 	        this.ai_token = source["ai_token"];
+	        this.ai_context_recent_turns = source["ai_context_recent_turns"];
+	        this.ai_context_compact_turns = source["ai_context_compact_turns"];
+	        this.ai_context_soft_budget = source["ai_context_soft_budget"];
+	        this.ai_context_hard_budget = source["ai_context_hard_budget"];
+	        this.ai_choice_prefetch_enabled = source["ai_choice_prefetch_enabled"];
+	        this.ai_choice_prefetch_global_concurrency = source["ai_choice_prefetch_global_concurrency"];
+	        this.ai_choice_prefetch_session_concurrency = source["ai_choice_prefetch_session_concurrency"];
+	        this.ai_choice_prefetch_ttl_ms = source["ai_choice_prefetch_ttl_ms"];
+	        this.ai_choice_prefetch_wait_ms = source["ai_choice_prefetch_wait_ms"];
 	    }
 	}
 

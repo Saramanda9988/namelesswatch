@@ -2,6 +2,8 @@ package roleplay
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +24,14 @@ func (f *fakeChatClient) Chat(_ context.Context, _ []ChatMessage) (string, error
 	response := f.responses[f.calls]
 	f.calls++
 	return response, nil
+}
+
+type failingChatClient struct {
+	err error
+}
+
+func (f failingChatClient) Chat(_ context.Context, _ []ChatMessage) (string, error) {
+	return "", f.err
 }
 
 func loadExamplePack(t *testing.T) StoryPack {
@@ -205,6 +215,46 @@ func TestNewGameSessionInDirUsesGameAndSessionPath(t *testing.T) {
 	}
 	if session.CurrentSceneID == "" && len(pack.Scenes) > 0 {
 		t.Fatal("expected current scene id to default from pack")
+	}
+}
+
+func TestNewGameSessionInitializesContextSummary(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSessionInDir("demo-game", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new game session in dir: %v", err)
+	}
+
+	summary, err := ReadContextSummary(session)
+	if err != nil {
+		t.Fatalf("read context summary: %v", err)
+	}
+	for _, heading := range []string{"## 当前阶段", "## 关键事实", "## 用户选择", "## 规则后果", "## 未解决线索", "## 结局倾向"} {
+		if !strings.Contains(summary, heading) {
+			t.Fatalf("expected summary heading %q, got:\n%s", heading, summary)
+		}
+	}
+	if _, err := os.Stat(ContextSummaryPath(session)); err != nil {
+		t.Fatalf("context summary file missing: %v", err)
+	}
+}
+
+func TestReadContextSummaryTreatsMissingFileAsDefault(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSessionInDir("demo-game", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new game session in dir: %v", err)
+	}
+	if err := os.Remove(ContextSummaryPath(session)); err != nil {
+		t.Fatalf("remove context summary: %v", err)
+	}
+
+	summary, err := ReadContextSummary(session)
+	if err != nil {
+		t.Fatalf("missing context summary should be readable: %v", err)
+	}
+	if summary != DefaultContextSummary() {
+		t.Fatalf("expected default summary, got:\n%s", summary)
 	}
 }
 
@@ -420,6 +470,108 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	}
 	if !strings.Contains(userPrompt, updatedRule) {
 		t.Fatal("expected prompt to include fresh rule.md from session workspace")
+	}
+}
+
+func TestBuildMessagesIncludesContextSummaryAndLimitsRecentTurns(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := WriteContextSummary(session, "## 当前阶段\n- 已进入走廊\n\n## 关键事实\n- 手表响过三次"); err != nil {
+		t.Fatalf("write context summary: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		session.AppendTurn(GameTurn{
+			ID:        NewID("turn"),
+			Role:      TurnRoleAI,
+			Payload:   []string{fmt.Sprintf("历史回合 %d", i)},
+			CreatedAt: NowISO(),
+		})
+	}
+
+	messages := BuildMessagesWithBudget(pack, session, nil, "", ContextBudget{RecentTurnLimit: 2})
+	userPrompt := messages[1].Content
+	if !strings.Contains(userPrompt, "--- context_summary.md ---") || !strings.Contains(userPrompt, "已进入走廊") {
+		t.Fatalf("expected context summary in prompt, got:\n%s", userPrompt)
+	}
+	if strings.Contains(userPrompt, "历史回合 0") || strings.Contains(userPrompt, "历史回合 1") || strings.Contains(userPrompt, "历史回合 2") {
+		t.Fatalf("expected old turns to be omitted from recent window, got:\n%s", userPrompt)
+	}
+	if !strings.Contains(userPrompt, "历史回合 3") || !strings.Contains(userPrompt, "历史回合 4") {
+		t.Fatalf("expected newest turns to remain, got:\n%s", userPrompt)
+	}
+}
+
+func TestBuildMessagesAppliesLowPriorityBudgets(t *testing.T) {
+	pack := loadExamplePack(t)
+	pack.Files["scene.md"] = "SCENE-LONG-CONTENT-123456789"
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := os.WriteFile(session.MemoryPath, []byte("memory-123456789"), 0o600); err != nil {
+		t.Fatalf("write memory: %v", err)
+	}
+	if err := WriteContextSummary(session, "summary-123456789"); err != nil {
+		t.Fatalf("write context summary: %v", err)
+	}
+
+	messages := BuildMessagesWithBudget(
+		pack,
+		session,
+		[]TerminalExecution{{Command: "cmd", Stdout: "stdout-123456789", Stderr: "stderr-123456789"}},
+		"repair-123456789",
+		ContextBudget{
+			RecentTurnLimit:        12,
+			StoryFileRuneBudget:    8,
+			SummaryRuneBudget:      8,
+			MemoryRuneBudget:       8,
+			TerminalResultRunes:    8,
+			RepairInstructionRunes: 8,
+		},
+	)
+	userPrompt := messages[1].Content
+	for _, unexpected := range []string{"SCENE-LONG-CONTENT-123456789", "memory-123456789", "summary-123456789", "stdout-123456789", "stderr-123456789", "repair-123456789"} {
+		if strings.Contains(userPrompt, unexpected) {
+			t.Fatalf("expected %q to be truncated, got:\n%s", unexpected, userPrompt)
+		}
+	}
+	if !strings.Contains(userPrompt, "[truncated]") {
+		t.Fatalf("expected truncation marker, got:\n%s", userPrompt)
+	}
+}
+
+func TestCompactSessionContextFailureKeepsExistingSummary(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	original := "## 当前阶段\n- 旧摘要仍然有效\n"
+	if err := WriteContextSummary(session, original); err != nil {
+		t.Fatalf("write context summary: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		session.AppendTurn(GameTurn{
+			ID:        NewID("turn"),
+			Role:      TurnRoleAI,
+			Payload:   []string{fmt.Sprintf("待压缩回合 %d", i)},
+			CreatedAt: NowISO(),
+		})
+	}
+
+	err = CompactSessionContext(context.Background(), failingChatClient{err: errors.New("model unavailable")}, session, ContextBudget{RecentTurnLimit: 1}, nil)
+	if err == nil {
+		t.Fatal("expected compaction error")
+	}
+	summary, readErr := ReadContextSummary(session)
+	if readErr != nil {
+		t.Fatalf("read context summary: %v", readErr)
+	}
+	if summary != original {
+		t.Fatalf("expected old summary to remain, got:\n%s", summary)
 	}
 }
 

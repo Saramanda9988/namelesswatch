@@ -92,6 +92,14 @@ export function SettingsPage() {
     setDraftConfig({ ...draftConfig, ...patch })
   }
 
+  const contextRecentTurns = draftConfig?.ai_context_recent_turns ?? 12
+  const contextCompactTurns = draftConfig?.ai_context_compact_turns ?? 24
+  const contextSoftBudget = draftConfig?.ai_context_soft_budget ?? 60000
+  const contextHardBudget = draftConfig?.ai_context_hard_budget ?? 120000
+  const prefetchGlobalConcurrency = draftConfig?.ai_choice_prefetch_global_concurrency ?? 2
+  const prefetchSessionConcurrency = draftConfig?.ai_choice_prefetch_session_concurrency ?? 2
+  const prefetchTTLSeconds = Math.round((draftConfig?.ai_choice_prefetch_ttl_ms ?? 120000) / 1000)
+
   return (
     <div className="min-h-screen bg-[#e9e1ca] text-[#1a1710]">
       <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-5 md:px-8">
@@ -157,6 +165,118 @@ export function SettingsPage() {
                   placeholder="sk-..."
                   disabled={isConfigLoading || !draftConfig}
                   onChange={(ai_token) => patchConfig({ ai_token })}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-none border-[#1a1710]/15 bg-[#f5edda]/70 text-[#1a1710]">
+              <CardHeader className="border-b border-[#1a1710]/10">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Gauge className="size-4 text-[#9b2d1b]" />
+                  上下文管理
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="最近回合"
+                  value={contextRecentTurns}
+                  min={4}
+                  max={24}
+                  suffix=" turn"
+                  onChange={(ai_context_recent_turns) =>
+                    patchConfig({
+                      ai_context_recent_turns,
+                      ai_context_compact_turns: Math.max(contextCompactTurns, ai_context_recent_turns + 1),
+                    })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="压缩阈值"
+                  value={contextCompactTurns}
+                  min={Math.min(96, contextRecentTurns + 1)}
+                  max={96}
+                  suffix=" turn"
+                  onChange={(ai_context_compact_turns) => patchConfig({ ai_context_compact_turns })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="软预算"
+                  value={contextSoftBudget}
+                  min={12000}
+                  max={300000}
+                  suffix=" 字"
+                  onChange={(ai_context_soft_budget) =>
+                    patchConfig({
+                      ai_context_soft_budget,
+                      ai_context_hard_budget: Math.max(contextHardBudget, ai_context_soft_budget),
+                    })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="硬预算"
+                  value={contextHardBudget}
+                  min={contextSoftBudget}
+                  max={500000}
+                  suffix=" 字"
+                  onChange={(ai_context_hard_budget) => patchConfig({ ai_context_hard_budget })}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-none border-[#1a1710]/15 bg-[#f5edda]/70 text-[#1a1710]">
+              <CardHeader className="border-b border-[#1a1710]/10">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bot className="size-4 text-[#9b2d1b]" />
+                  生成加速
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <SettingToggle
+                  icon={<Bot className="size-5" />}
+                  label="选项预生成"
+                  checked={draftConfig?.ai_choice_prefetch_enabled ?? false}
+                  onChange={(ai_choice_prefetch_enabled) => patchConfig({ ai_choice_prefetch_enabled })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="全局并发"
+                  value={prefetchGlobalConcurrency}
+                  min={1}
+                  max={8}
+                  suffix=" 路"
+                  onChange={(ai_choice_prefetch_global_concurrency) =>
+                    patchConfig({
+                      ai_choice_prefetch_global_concurrency,
+                      ai_choice_prefetch_session_concurrency: Math.min(prefetchSessionConcurrency, ai_choice_prefetch_global_concurrency),
+                    })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="单局并发"
+                  value={prefetchSessionConcurrency}
+                  min={1}
+                  max={prefetchGlobalConcurrency}
+                  suffix=" 路"
+                  onChange={(ai_choice_prefetch_session_concurrency) => patchConfig({ ai_choice_prefetch_session_concurrency })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="缓存时长"
+                  value={prefetchTTLSeconds}
+                  min={10}
+                  max={600}
+                  suffix=" 秒"
+                  onChange={(seconds) => patchConfig({ ai_choice_prefetch_ttl_ms: seconds * 1000 })}
+                />
+                <SettingRange
+                  icon={<Gauge className="size-5" />}
+                  label="提交等待"
+                  value={draftConfig?.ai_choice_prefetch_wait_ms ?? 1200}
+                  min={0}
+                  max={10000}
+                  suffix=" ms"
+                  onChange={(ai_choice_prefetch_wait_ms) => patchConfig({ ai_choice_prefetch_wait_ms })}
                 />
               </CardContent>
             </Card>

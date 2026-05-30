@@ -25,6 +25,9 @@ type GameService struct {
 	gameIDs     []string
 	repo        *gameRepository
 	sessionRepo *sessionRepository
+	prefetch    *prefetchManager
+
+	newChatClient chatClientFactory
 }
 
 // SessionSummary is a lightweight view of a stored session for listing saves.
@@ -51,6 +54,10 @@ func NewGameService(config *appconf.AppConfig) *GameService {
 		sessions: make(map[string]*roleplay.GameSession),
 		games:    make(map[string]roleplay.LibraryGame),
 		gameIDs:  []string{},
+		prefetch: newPrefetchManager(),
+		newChatClient: func(config appconf.AppConfig) roleplay.ChatCompleter {
+			return roleplay.NewOpenAIClient(config)
+		},
 	}
 }
 
@@ -251,6 +258,11 @@ func (s *GameService) DeleteGame(gameID string) error {
 	defer s.mu.Unlock()
 	if _, exists := s.games[gameID]; !exists {
 		return errors.New("game not found")
+	}
+	for sessionID, session := range s.sessions {
+		if session.GameID == gameID && s.prefetch != nil {
+			s.prefetch.cancelSession(sessionID)
+		}
 	}
 	delete(s.games, gameID)
 	delete(s.packs, gameID)
@@ -456,7 +468,33 @@ func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.
 		s.logWarningf("submit_choice ignored session=%s choice=%s reason=session already ended", sessionID, choiceID)
 		return result, nil
 	}
+	latestAITurn, hasLatestAITurn := session.LatestAITurn()
+	config := s.config
+	s.mu.Unlock()
 
+	if hasLatestAITurn {
+		result, used, err := s.promotePrefetchedChoice(sessionID, latestAITurn.ID, choiceID, config)
+		if used || err != nil {
+			return result, err
+		}
+	}
+
+	s.mu.Lock()
+	session, ok = s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		s.logErrorf("submit_choice failed session=%s error=session not found", sessionID)
+		return roleplay.GameTurnResult{}, errors.New("session not found")
+	}
+	if session.State == roleplay.SessionStateEnded {
+		result := roleplay.ResultFromSession(session)
+		s.mu.Unlock()
+		s.logWarningf("submit_choice ignored session=%s choice=%s reason=session already ended", sessionID, choiceID)
+		return result, nil
+	}
+	if s.prefetch != nil {
+		s.prefetch.cancelSession(sessionID)
+	}
 	label := session.ChoiceLabel(choiceID)
 	session.AppendTurn(roleplay.GameTurn{
 		ID:                  roleplay.NewID("turn"),
@@ -469,6 +507,104 @@ func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.
 	s.mu.Unlock()
 
 	return s.advanceSession(sessionID)
+}
+
+func (s *GameService) promotePrefetchedChoice(sessionID string, baseTurnID string, choiceID string, config appconf.AppConfig) (roleplay.GameTurnResult, bool, error) {
+	cfg := prefetchConfigFromAppConfig(config)
+	if s.prefetch == nil || !cfg.Enabled {
+		return roleplay.GameTurnResult{}, false, nil
+	}
+	outcome, ok := s.prefetch.waitForResult(s.ctx, cfg, sessionID, baseTurnID, choiceID)
+	if !ok {
+		return roleplay.GameTurnResult{}, false, nil
+	}
+
+	s.mu.Lock()
+	session, sessionOK := s.sessions[sessionID]
+	if !sessionOK || session.State == roleplay.SessionStateEnded {
+		s.mu.Unlock()
+		discardPrefetchOutcome(outcome)
+		return roleplay.GameTurnResult{}, false, nil
+	}
+	latest, latestOK := session.LatestAITurn()
+	if !latestOK || latest.ID != baseTurnID {
+		s.mu.Unlock()
+		discardPrefetchOutcome(outcome)
+		return roleplay.GameTurnResult{}, false, nil
+	}
+	result, err := promotePrefetchBranch(session, outcome)
+	sessionRepo := s.sessionRepo
+	pack := s.packs[session.GameID]
+	nextConfig := s.config
+	sessionClone := session.Clone()
+	s.mu.Unlock()
+
+	if err != nil {
+		discardPrefetchOutcome(outcome)
+		s.logErrorf("choice_prefetch promote_failed session=%s choice=%s error=%v", sessionID, choiceID, err)
+		return roleplay.GameTurnResult{}, false, nil
+	}
+	if s.prefetch != nil {
+		s.prefetch.cancelBaseExceptChoice(sessionID, baseTurnID, choiceID)
+	}
+	if sessionRepo != nil {
+		if saveErr := sessionRepo.save(&sessionClone); saveErr != nil {
+			s.logErrorf("choice_prefetch autosave_failed session=%s choice=%s error=%v", sessionID, choiceID, saveErr)
+		}
+	}
+	s.logInfof("choice_prefetch hit session=%s choice=%s state=%s", sessionID, choiceID, result.State)
+	s.maybeCompactSessionContext(sessionClone, pack, nextConfig)
+	s.maybeStartChoicePrefetch(sessionClone, pack, nextConfig, result)
+	return result, true, nil
+}
+
+func (s *GameService) maybeCompactSessionContext(session roleplay.GameSession, pack roleplay.StoryPack, config appconf.AppConfig) {
+	budget := roleplay.ContextBudgetFromConfig(config)
+	overSoftBudget := roleplay.EstimatePromptRunes(roleplay.BuildMessagesWithBudget(pack, &session, nil, "", budget)) > budget.SoftPromptRuneBudget
+	if !overSoftBudget && !roleplay.ShouldCompactSessionContext(&session, budget) {
+		return
+	}
+	clientFactory := s.newChatClient
+	if clientFactory == nil {
+		return
+	}
+	go func() {
+		client := clientFactory(config)
+		if err := roleplay.CompactSessionContext(s.requestContext(), client, &session, budget, s.logInfof); err != nil {
+			s.logWarningf("context_compaction failed session=%s error=%v", session.ID, err)
+		}
+	}()
+}
+
+func (s *GameService) maybeStartChoicePrefetch(session roleplay.GameSession, pack roleplay.StoryPack, config appconf.AppConfig, result roleplay.GameTurnResult) {
+	if s.prefetch == nil {
+		return
+	}
+	if result.State == roleplay.SessionStateEnded {
+		s.prefetch.cancelSession(session.ID)
+		return
+	}
+	cfg := prefetchConfigFromAppConfig(config)
+	if !cfg.Enabled {
+		return
+	}
+	tool, ok := choiceToolFromTurn(result.Turn)
+	if !ok {
+		return
+	}
+	s.prefetch.startChoices(s.requestContext(), cfg, config, s.newChatClient, pack, session.Clone(), result.Turn, tool.Options, s.logInfof)
+}
+
+func choiceToolFromTurn(turn roleplay.GameTurn) (roleplay.ChoiceTool, bool) {
+	if turn.Role != roleplay.TurnRoleAI || turn.Ending != nil {
+		return roleplay.ChoiceTool{}, false
+	}
+	for _, tool := range turn.Tools {
+		if tool.Type == "choice" && len(tool.Options) > 0 {
+			return tool, true
+		}
+	}
+	return roleplay.ChoiceTool{}, false
 }
 
 func (s *GameService) GetSession(sessionID string) (roleplay.GameSession, error) {
@@ -590,6 +726,9 @@ func (s *GameService) DeleteSession(sessionID string) error {
 	sessionRepo := s.sessionRepo
 	delete(s.sessions, sessionID)
 	s.mu.Unlock()
+	if s.prefetch != nil {
+		s.prefetch.cancelSession(sessionID)
+	}
 
 	if sessionRepo == nil {
 		return errors.New("session repository is not initialized")
@@ -635,14 +774,28 @@ func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult,
 	s.mu.Unlock()
 
 	s.logInfof("advance_session start game=%s session=%s state=%s turns=%d model=%s base_url=%s", session.GameID, session.ID, session.State, len(session.Turns), config.AIModel, config.AIBaseURL)
-	client := roleplay.NewOpenAIClient(config)
-	result, err := roleplay.RunAITurnWithLogger(s.ctx, client, pack, session, s.logInfof)
+	clientFactory := s.newChatClient
+	if clientFactory == nil {
+		clientFactory = func(config appconf.AppConfig) roleplay.ChatCompleter {
+			return roleplay.NewOpenAIClient(config)
+		}
+	}
+	client := clientFactory(config)
+	result, err := roleplay.RunAITurnWithOptions(
+		s.requestContext(),
+		client,
+		pack,
+		session,
+		roleplay.AITurnOptions{ContextBudget: roleplay.ContextBudgetFromConfig(config)},
+		s.logInfof,
+	)
 
 	s.mu.Lock()
 	if current, ok := s.sessions[sessionID]; ok {
 		*current = *session
 	}
 	sessionRepo := s.sessionRepo
+	sessionClone := session.Clone()
 	s.mu.Unlock()
 
 	if err != nil {
@@ -654,9 +807,18 @@ func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult,
 				s.logErrorf("advance_session autosave_failed game=%s session=%s error=%v", session.GameID, session.ID, saveErr)
 			}
 		}
+		s.maybeCompactSessionContext(sessionClone, pack, config)
+		s.maybeStartChoicePrefetch(sessionClone, pack, config, result)
 	}
 
 	return result, err
+}
+
+func (s *GameService) requestContext() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
 }
 
 func (s *GameService) logInfof(format string, args ...interface{}) {

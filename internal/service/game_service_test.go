@@ -1,13 +1,17 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"namelesswatch/internal/appconf"
 	"namelesswatch/internal/roleplay"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func testGameFiles(t *testing.T) map[string]string {
@@ -108,12 +112,309 @@ func TestNormalizeAndMaterializeLibraryGameBGMAssets(t *testing.T) {
 	}
 }
 
+type scriptedChatFactory struct {
+	mu      sync.Mutex
+	clients []*scriptedChatClient
+	calls   int
+}
+
+type scriptedChatClient struct {
+	response string
+	err      error
+	delay    time.Duration
+	started  chan struct{}
+	once     sync.Once
+}
+
+func (f *scriptedChatFactory) factory(_ appconf.AppConfig) roleplay.ChatCompleter {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.calls >= len(f.clients) {
+		f.calls++
+		return &scriptedChatClient{response: endedTurnResponse("默认回合")}
+	}
+	client := f.clients[f.calls]
+	f.calls++
+	return client
+}
+
+func (f *scriptedChatFactory) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (c *scriptedChatClient) Chat(ctx context.Context, _ []roleplay.ChatMessage) (string, error) {
+	if c.started != nil {
+		c.once.Do(func() {
+			close(c.started)
+		})
+	}
+	if c.delay > 0 {
+		timer := time.NewTimer(c.delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if c.err != nil {
+		return "", c.err
+	}
+	return c.response, nil
+}
+
+func TestGameServiceSubmitChoiceUsesPrefetchHit(t *testing.T) {
+	config := prefetchTestConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: endedTurnResponse("预生成命中")}},
+	}
+	service, session, pack := newPrefetchTestService(t, config, factory)
+	baseTurn := session.Turns[len(session.Turns)-1]
+	originalWorkspace := session.WorkspacePath
+
+	service.maybeStartChoicePrefetch(session.Clone(), pack, config, roleplay.ResultFromSession(session))
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if got := strings.Join(result.Payload, ""); got != "预生成命中" {
+		t.Fatalf("expected prefetch hit payload, got %#v", result.Payload)
+	}
+	if factory.callCount() != 1 {
+		t.Fatalf("expected only prefetch model call, got %d", factory.callCount())
+	}
+
+	current := service.sessions[session.ID]
+	if current.ID != session.ID || current.GameID != session.GameID || current.Label != session.Label || current.ParentID != session.ParentID {
+		t.Fatalf("promoted branch changed external identity: %#v", current)
+	}
+	if len(current.Turns) != 3 || current.Turns[1].SelectedChoiceID != "left" || current.Turns[0].ID != baseTurn.ID {
+		t.Fatalf("unexpected promoted turns: %#v", current.Turns)
+	}
+	if current.WorkspacePath == originalWorkspace || !strings.Contains(current.WorkspacePath, ".prefetch") {
+		t.Fatalf("expected promoted branch workspace, got %q from %q", current.WorkspacePath, originalWorkspace)
+	}
+}
+
+func TestGameServiceSubmitChoiceFallsBackWhenPrefetchMissing(t *testing.T) {
+	config := prefetchTestConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: endedTurnResponse("同步回落")}},
+	}
+	service, session, _ := newPrefetchTestService(t, config, factory)
+
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if got := strings.Join(result.Payload, ""); got != "同步回落" {
+		t.Fatalf("expected fallback payload, got %#v", result.Payload)
+	}
+	if factory.callCount() != 1 {
+		t.Fatalf("expected one synchronous model call, got %d", factory.callCount())
+	}
+}
+
+func TestGameServiceSubmitChoiceFallsBackWhenPrefetchTimesOut(t *testing.T) {
+	config := prefetchTestConfig()
+	config.AIChoicePrefetchWaitMS = 10
+	started := make(chan struct{})
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{
+			{response: endedTurnResponse("迟到预生成"), delay: 200 * time.Millisecond, started: started},
+			{response: endedTurnResponse("超时同步回落")},
+		},
+	}
+	service, session, pack := newPrefetchTestService(t, config, factory)
+	service.maybeStartChoicePrefetch(session.Clone(), pack, config, roleplay.ResultFromSession(session))
+	waitForStarted(t, started)
+
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if got := strings.Join(result.Payload, ""); got != "超时同步回落" {
+		t.Fatalf("expected timeout fallback payload, got %#v", result.Payload)
+	}
+	if factory.callCount() != 2 {
+		t.Fatalf("expected prefetch plus fallback calls, got %d", factory.callCount())
+	}
+}
+
+func TestGameServiceSubmitChoiceFallsBackWhenPrefetchFails(t *testing.T) {
+	config := prefetchTestConfig()
+	started := make(chan struct{})
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{
+			{err: errors.New("prefetch failed"), started: started},
+			{response: endedTurnResponse("失败同步回落")},
+		},
+	}
+	service, session, pack := newPrefetchTestService(t, config, factory)
+	service.maybeStartChoicePrefetch(session.Clone(), pack, config, roleplay.ResultFromSession(session))
+	waitForStarted(t, started)
+
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if got := strings.Join(result.Payload, ""); got != "失败同步回落" {
+		t.Fatalf("expected failure fallback payload, got %#v", result.Payload)
+	}
+	if factory.callCount() != 2 {
+		t.Fatalf("expected failed prefetch plus fallback calls, got %d", factory.callCount())
+	}
+}
+
+func TestGameServiceDiscardStalePrefetchResult(t *testing.T) {
+	config := prefetchTestConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: endedTurnResponse("过期预生成")}},
+	}
+	service, session, pack := newPrefetchTestService(t, config, factory)
+	baseTurnID := session.Turns[len(session.Turns)-1].ID
+	service.maybeStartChoicePrefetch(session.Clone(), pack, config, roleplay.ResultFromSession(session))
+	session.AppendTurn(roleplay.GameTurn{
+		ID:        "turn-new-base",
+		Role:      roleplay.TurnRoleAI,
+		Payload:   []string{"新的 base 回合。"},
+		Tools:     testChoiceTools(),
+		CreatedAt: roleplay.NowISO(),
+	})
+
+	_, used, err := service.promotePrefetchedChoice(session.ID, baseTurnID, "left", config)
+	if err != nil {
+		t.Fatalf("promote prefetch: %v", err)
+	}
+	if used {
+		t.Fatal("stale prefetch result should not be promoted")
+	}
+	prefetchRoot := filepath.Join(filepath.Dir(session.WorkspacePath), ".prefetch")
+	if entries, readErr := os.ReadDir(prefetchRoot); readErr == nil && len(entries) != 0 {
+		t.Fatalf("expected stale prefetch workspace to be cleaned, got %d entries", len(entries))
+	}
+}
+
+func TestCreatePrefetchBranchIsolatesWorkspace(t *testing.T) {
+	pack, err := roleplay.NewStoryPack("game-a", testGameFiles(t))
+	if err != nil {
+		t.Fatalf("new story pack: %v", err)
+	}
+	session, err := roleplay.NewGameSessionInDir("game-a", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := os.WriteFile(session.MemoryPath, []byte("source memory"), 0o600); err != nil {
+		t.Fatalf("write source memory: %v", err)
+	}
+	if err := roleplay.WriteContextSummary(session, "## 当前阶段\n- source summary"); err != nil {
+		t.Fatalf("write context summary: %v", err)
+	}
+	session.AppendTurn(roleplay.GameTurn{
+		ID:        "turn-base",
+		Role:      roleplay.TurnRoleAI,
+		Payload:   []string{"你站在岔路口。"},
+		Tools:     testChoiceTools(),
+		CreatedAt: roleplay.NowISO(),
+	})
+
+	branch, workspace, err := createPrefetchBranch(session.Clone(), roleplay.ChoiceOption{ID: "left", Label: "向左"})
+	if err != nil {
+		t.Fatalf("create prefetch branch: %v", err)
+	}
+	defer os.RemoveAll(workspace)
+	if branch.WorkspacePath == session.WorkspacePath || branch.MemoryPath == session.MemoryPath {
+		t.Fatal("branch must use independent workspace paths")
+	}
+	if err := os.WriteFile(branch.MemoryPath, []byte("branch memory"), 0o600); err != nil {
+		t.Fatalf("write branch memory: %v", err)
+	}
+	sourceMemory, err := os.ReadFile(session.MemoryPath)
+	if err != nil {
+		t.Fatalf("read source memory: %v", err)
+	}
+	if string(sourceMemory) != "source memory" {
+		t.Fatalf("source memory was modified: %q", string(sourceMemory))
+	}
+	branchSummary, err := roleplay.ReadContextSummary(branch)
+	if err != nil {
+		t.Fatalf("read branch summary: %v", err)
+	}
+	if !strings.Contains(branchSummary, "source summary") {
+		t.Fatalf("branch did not copy context summary, got:\n%s", branchSummary)
+	}
+}
+
 func testLibraryGame(t *testing.T, id string) roleplay.LibraryGame {
 	t.Helper()
 
 	return roleplay.LibraryGame{
 		ID:    id,
 		Files: testGameFiles(t),
+	}
+}
+
+func prefetchTestConfig() appconf.AppConfig {
+	config := *appconf.DefaultConfig()
+	config.AIChoicePrefetchEnabled = true
+	config.AIChoicePrefetchGlobalConcurrency = 1
+	config.AIChoicePrefetchSessionConcurrency = 1
+	config.AIChoicePrefetchTTLMS = 1000
+	config.AIChoicePrefetchWaitMS = 200
+	return config
+}
+
+func newPrefetchTestService(t *testing.T, config appconf.AppConfig, factory *scriptedChatFactory) (*GameService, *roleplay.GameSession, roleplay.StoryPack) {
+	t.Helper()
+
+	pack, err := roleplay.NewStoryPack("game-a", testGameFiles(t))
+	if err != nil {
+		t.Fatalf("new story pack: %v", err)
+	}
+	session, err := roleplay.NewGameSessionInDir("game-a", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Label = "主线"
+	session.ParentID = "parent-session"
+	session.AppendTurn(roleplay.GameTurn{
+		ID:        "turn-base",
+		Role:      roleplay.TurnRoleAI,
+		Payload:   []string{"你站在门前。"},
+		Tools:     testChoiceTools(),
+		CreatedAt: roleplay.NowISO(),
+	})
+
+	service := NewGameService(&config)
+	service.packs[pack.ID] = pack
+	service.sessions[session.ID] = session
+	service.newChatClient = factory.factory
+	return service, session, pack
+}
+
+func testChoiceTools() []roleplay.ChoiceTool {
+	return []roleplay.ChoiceTool{{
+		Type: "choice",
+		ID:   "main",
+		Options: []roleplay.ChoiceOption{
+			{ID: "left", Label: "向左"},
+		},
+	}}
+}
+
+func endedTurnResponse(payload string) string {
+	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"test-end","title":"测试结局","kind":"neutral"}}`
+}
+
+func waitForStarted(t *testing.T, started <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for fake chat client to start")
 	}
 }
 

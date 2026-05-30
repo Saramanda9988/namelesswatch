@@ -4,6 +4,7 @@ import (
 	"namelesswatch/internal/roleplay"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,9 @@ func TestSessionRepositoryListFiltersByGame(t *testing.T) {
 func TestSessionRepositorySnapshotIsIndependentCopy(t *testing.T) {
 	repo := &sessionRepository{root: t.TempDir()}
 	session := newTestSession(t, repo.root, "game-a")
+	if err := roleplay.WriteContextSummary(session, "## 当前阶段\n- source summary"); err != nil {
+		t.Fatalf("write source summary: %v", err)
+	}
 	if err := repo.save(session); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
@@ -97,6 +101,13 @@ func TestSessionRepositorySnapshotIsIndependentCopy(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(snap.WorkspacePath, "memory.md")); err != nil {
 		t.Fatalf("snapshot workspace missing memory.md: %v", err)
 	}
+	snapSummary, err := roleplay.ReadContextSummary(snap)
+	if err != nil {
+		t.Fatalf("read snapshot context summary: %v", err)
+	}
+	if !strings.Contains(snapSummary, "source summary") {
+		t.Fatalf("snapshot did not copy context summary, got:\n%s", snapSummary)
+	}
 	if snap.WorkspacePath == session.WorkspacePath {
 		t.Fatalf("snapshot workspace must differ from source")
 	}
@@ -107,6 +118,36 @@ func TestSessionRepositorySnapshotIsIndependentCopy(t *testing.T) {
 	}
 	if len(listed) != 2 {
 		t.Fatalf("expected source + snapshot, got %d", len(listed))
+	}
+}
+
+func TestSessionRepositoryForkCopiesContextSummary(t *testing.T) {
+	repo := &sessionRepository{root: t.TempDir()}
+	session := newTestSession(t, repo.root, "game-a")
+	if err := roleplay.WriteContextSummary(session, "## 当前阶段\n- snapshot summary"); err != nil {
+		t.Fatalf("write source summary: %v", err)
+	}
+	snap, err := repo.snapshot(session, "存档点")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	forked, err := repo.fork(snap)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if forked.IsSnapshot || forked.ParentID != snap.ID || forked.ID == snap.ID {
+		t.Fatalf("unexpected fork metadata: %#v", forked)
+	}
+	forkSummary, err := roleplay.ReadContextSummary(forked)
+	if err != nil {
+		t.Fatalf("read fork context summary: %v", err)
+	}
+	if !strings.Contains(forkSummary, "snapshot summary") {
+		t.Fatalf("fork did not copy context summary, got:\n%s", forkSummary)
+	}
+	if forked.WorkspacePath == snap.WorkspacePath {
+		t.Fatal("fork workspace must differ from snapshot")
 	}
 }
 
@@ -125,5 +166,8 @@ func TestSessionRepositoryDeleteRemovesDir(t *testing.T) {
 	}
 	if _, err := os.Stat(repo.sessionDir(session.ID)); !os.IsNotExist(err) {
 		t.Fatalf("session directory should be removed")
+	}
+	if _, err := os.Stat(session.WorkspacePath); !os.IsNotExist(err) {
+		t.Fatalf("session workspace should be removed")
 	}
 }

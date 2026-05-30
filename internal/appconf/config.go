@@ -11,13 +11,32 @@ import (
 const (
 	DefaultAIProvider = "openai"
 	DefaultAIBaseURL  = "https://api.openai.com/v1"
+
+	DefaultAIContextRecentTurns    = 12
+	DefaultAIContextCompactTurns   = 24
+	DefaultAIContextSoftBudget     = 60000
+	DefaultAIContextHardBudget     = 120000
+	DefaultAIChoicePrefetchEnabled = false
+	DefaultAIChoicePrefetchGlobal  = 2
+	DefaultAIChoicePrefetchSession = 2
+	DefaultAIChoicePrefetchTTLMS   = 120000
+	DefaultAIChoicePrefetchWaitMS  = 1200
 )
 
 type AppConfig struct {
-	AIProvider string `json:"ai_provider"`
-	AIBaseURL  string `json:"ai_base_url"`
-	AIModel    string `json:"ai_model"`
-	AIToken    string `json:"ai_token,omitempty"`
+	AIProvider                         string `json:"ai_provider"`
+	AIBaseURL                          string `json:"ai_base_url"`
+	AIModel                            string `json:"ai_model"`
+	AIToken                            string `json:"ai_token,omitempty"`
+	AIContextRecentTurns               int    `json:"ai_context_recent_turns"`
+	AIContextCompactTurns              int    `json:"ai_context_compact_turns"`
+	AIContextSoftBudget                int    `json:"ai_context_soft_budget"`
+	AIContextHardBudget                int    `json:"ai_context_hard_budget"`
+	AIChoicePrefetchEnabled            bool   `json:"ai_choice_prefetch_enabled"`
+	AIChoicePrefetchGlobalConcurrency  int    `json:"ai_choice_prefetch_global_concurrency"`
+	AIChoicePrefetchSessionConcurrency int    `json:"ai_choice_prefetch_session_concurrency"`
+	AIChoicePrefetchTTLMS              int    `json:"ai_choice_prefetch_ttl_ms"`
+	AIChoicePrefetchWaitMS             int    `json:"ai_choice_prefetch_wait_ms"`
 }
 
 func DefaultConfig() *AppConfig {
@@ -27,10 +46,19 @@ func DefaultConfig() *AppConfig {
 	}
 
 	config := &AppConfig{
-		AIProvider: strings.TrimSpace(os.Getenv("AI_PROVIDER")),
-		AIBaseURL:  baseURL,
-		AIModel:    strings.TrimSpace(os.Getenv("OPENAI_MODEL")),
-		AIToken:    strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		AIProvider:                         strings.TrimSpace(os.Getenv("AI_PROVIDER")),
+		AIBaseURL:                          baseURL,
+		AIModel:                            strings.TrimSpace(os.Getenv("OPENAI_MODEL")),
+		AIToken:                            strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		AIContextRecentTurns:               DefaultAIContextRecentTurns,
+		AIContextCompactTurns:              DefaultAIContextCompactTurns,
+		AIContextSoftBudget:                DefaultAIContextSoftBudget,
+		AIContextHardBudget:                DefaultAIContextHardBudget,
+		AIChoicePrefetchEnabled:            DefaultAIChoicePrefetchEnabled,
+		AIChoicePrefetchGlobalConcurrency:  DefaultAIChoicePrefetchGlobal,
+		AIChoicePrefetchSessionConcurrency: DefaultAIChoicePrefetchSession,
+		AIChoicePrefetchTTLMS:              DefaultAIChoicePrefetchTTLMS,
+		AIChoicePrefetchWaitMS:             DefaultAIChoicePrefetchWaitMS,
 	}
 	Normalize(config)
 	return config
@@ -95,6 +123,27 @@ func Normalize(config *AppConfig) {
 	}
 	config.AIModel = strings.TrimSpace(config.AIModel)
 	config.AIToken = strings.TrimSpace(config.AIToken)
+	config.AIContextRecentTurns = normalizeInt(config.AIContextRecentTurns, DefaultAIContextRecentTurns, 4, 24)
+	config.AIContextCompactTurns = normalizeInt(config.AIContextCompactTurns, DefaultAIContextCompactTurns, config.AIContextRecentTurns+1, 96)
+	config.AIContextSoftBudget = normalizeInt(config.AIContextSoftBudget, DefaultAIContextSoftBudget, 12000, 300000)
+	config.AIContextHardBudget = normalizeInt(config.AIContextHardBudget, DefaultAIContextHardBudget, config.AIContextSoftBudget, 500000)
+	config.AIChoicePrefetchGlobalConcurrency = normalizeInt(config.AIChoicePrefetchGlobalConcurrency, DefaultAIChoicePrefetchGlobal, 1, 8)
+	config.AIChoicePrefetchSessionConcurrency = normalizeInt(config.AIChoicePrefetchSessionConcurrency, DefaultAIChoicePrefetchSession, 1, config.AIChoicePrefetchGlobalConcurrency)
+	config.AIChoicePrefetchTTLMS = normalizeInt(config.AIChoicePrefetchTTLMS, DefaultAIChoicePrefetchTTLMS, 10000, 600000)
+	config.AIChoicePrefetchWaitMS = normalizeInt(config.AIChoicePrefetchWaitMS, DefaultAIChoicePrefetchWaitMS, 0, 10000)
+}
+
+func normalizeInt(value, fallback, minValue, maxValue int) int {
+	if value == 0 {
+		value = fallback
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 func GetConfigDir() (string, error) {
