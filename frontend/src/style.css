@@ -5,15 +5,12 @@
 
 @custom-variant dark (&:is(.dark *));
 
-html {
-    background-color: hsl(222.2 84% 4.9%);
-}
-
 body {
     margin: 0;
-    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-    sans-serif;
+    font-family: "Nunito", "Geist Variable", serif;
+    background-color: #111315;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
 }
 
 @font-face {
@@ -26,6 +23,12 @@ body {
 
 #root {
     height: 100vh;
+}
+
+button,
+a,
+input {
+    -webkit-tap-highlight-color: transparent;
 }
 
 @theme inline {
@@ -145,7 +148,7 @@ body {
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
     }
   html {
     @apply font-sans;
