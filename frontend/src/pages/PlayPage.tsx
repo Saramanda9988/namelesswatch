@@ -77,12 +77,11 @@ function startGameOnce(game: roleplay.LibraryGame) {
   logRuntimeInfo(`[play] start requested game=${game.id} title=${game.title}`)
   const request = RegisterGamePack(game.id, game.files)
     .then(() => StartGame(game.id))
-    .finally(() => {
-      window.setTimeout(() => {
-        if (startGameRequests.get(game.id) === request) {
-          startGameRequests.delete(game.id)
-        }
-      }, 1000)
+    .catch((cause) => {
+      if (startGameRequests.get(game.id) === request) {
+        startGameRequests.delete(game.id)
+      }
+      throw cause
     })
 
   startGameRequests.set(game.id, request)
