@@ -25,6 +25,7 @@ const (
 var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md", "endings.md"}
 
 const MetadataFileName = "metadata.json"
+const PlayerBriefingFileName = "briefing.json"
 
 type StoryPack struct {
 	ID               string            `json:"id"`
@@ -206,8 +207,10 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 
 func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, error) {
 	normalized := normalizeFileContents(files)
-	validFiles := make([]string, 0, len(RequiredStoryFiles)+1)
-	for _, fileName := range append([]string{MetadataFileName}, RequiredStoryFiles...) {
+	validFiles := make([]string, 0, len(RequiredStoryFiles)+2)
+	storyFileNames := append([]string{MetadataFileName}, RequiredStoryFiles...)
+	storyFileNames = append(storyFileNames, PlayerBriefingFileName)
+	for _, fileName := range storyFileNames {
 		if _, ok := normalized[strings.ToLower(fileName)]; ok {
 			validFiles = append(validFiles, fileName)
 		}

@@ -18,6 +18,7 @@ import * as React from 'react'
 
 import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
 import { LogError, LogInfo } from '../../wailsjs/runtime/runtime'
+import { PlayerBriefingPanel } from '@/components/player-briefing-panel'
 import { PlaySidebar, type PlaySidebarHistoryItem, type PlaySidebarSceneMarker } from '@/components/play-sidebar'
 import { PlaySettingsModal } from '@/components/play-settings-modal'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useBgmPlayer } from '@/hooks/use-bgm-player'
 import { useNarrativeReveal } from '@/hooks/use-narrative-reveal'
+import { parsePlayerBriefing } from '@/lib/player-briefing'
 import { cn } from '@/lib/utils'
 import { useGameStore } from '@/stores/game-store'
 import type { roleplay, service } from '../../wailsjs/go/models'
@@ -99,6 +101,7 @@ export function PlayPage() {
   const listSessions = useGameStore((state) => state.listSessions)
   const deleteSession = useGameStore((state) => state.deleteSession)
   const game = games.find((item) => item.id === gameId)
+  const playerBriefing = React.useMemo(() => parsePlayerBriefing(game?.files), [game?.files])
   const [sessionId, setSessionId] = React.useState<string>()
   const [latestResult, setLatestResult] = React.useState<roleplay.GameTurnResult>()
   const [turns, setTurns] = React.useState<roleplay.GameTurn[]>([])
@@ -107,6 +110,7 @@ export function PlayPage() {
   const [choiceLabels, setChoiceLabels] = React.useState<string[]>([])
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
+  const [isBriefingConfirmed, setIsBriefingConfirmed] = React.useState(false)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
   const [activeSceneId, setActiveSceneId] = React.useState<string>()
   const [snapshotBusy, setSnapshotBusy] = React.useState(false)
@@ -143,6 +147,7 @@ export function PlayPage() {
 
     let cancelled = false
     const currentGame = game
+    const resumeId = resumeIdRef.current
     setIsStarting(true)
     setError(undefined)
     setTurns([])
@@ -150,8 +155,7 @@ export function PlayPage() {
     setLatestResult(undefined)
     setSessionId(undefined)
     setActiveSceneId(currentGame.scenes?.[0]?.id)
-
-    const resumeId = resumeIdRef.current
+    setIsBriefingConfirmed(Boolean(resumeId || !playerBriefing))
 
     async function start() {
       try {
@@ -193,7 +197,7 @@ export function PlayPage() {
     return () => {
       cancelled = true
     }
-  }, [game, restartToken, resumeSession])
+  }, [game, playerBriefing, restartToken, resumeSession])
 
   async function submitChoice(choiceId: string) {
     if (!sessionId || pendingChoiceId || latestResult?.state === 'ended') {
@@ -366,9 +370,10 @@ export function PlayPage() {
     logRuntimeError(`[play] bgm missing game=${game.id} bgm=${currentBgmId}`)
   }, [currentBgm, currentBgmId, game])
 
+  const narrativeLines = isBriefingConfirmed ? currentLines : []
   const { revealedLines, activeIndex, phase, isComplete, advance } = useNarrativeReveal({
-    lines: currentLines,
-    resetKey: currentTurn?.id ?? 'none',
+    lines: narrativeLines,
+    resetKey: `${currentTurn?.id ?? 'none'}:${isBriefingConfirmed ? 'ready' : 'briefing'}`,
     textSpeed,
     autoAdvance,
   })
@@ -400,9 +405,10 @@ export function PlayPage() {
     return items
   }, [renderableTurns, choiceLabels, isComplete])
 
-  const canAdvance = !isStarting && !error && currentLines.length > 0 && !isComplete
-  const showChoicePanel = Boolean(choiceTool && !isEnded && isComplete)
-  const showGameOver = Boolean(isEnded && latestResult?.ending && isComplete)
+  const showGameOver = Boolean(isBriefingConfirmed && isEnded && latestResult?.ending && isComplete)
+  const showBriefingPanel = Boolean(playerBriefing && !isBriefingConfirmed && !error && !showGameOver)
+  const canAdvance = !showBriefingPanel && !isStarting && !error && currentLines.length > 0 && !isComplete
+  const showChoicePanel = Boolean(!showBriefingPanel && choiceTool && !isEnded && isComplete)
   const visibleNarrativeLine = showChoicePanel && choiceTool?.prompt
     ? choiceTool.prompt
     : revealedLines.at(-1) ?? ''
@@ -420,6 +426,7 @@ export function PlayPage() {
     setPendingChoiceId(undefined)
     setActiveSceneId(game?.scenes?.[0]?.id)
     setSnapshotHint(undefined)
+    setIsBriefingConfirmed(!playerBriefing)
     setIsStarting(true)
     setRestartToken((current) => current + 1)
   }
@@ -570,6 +577,16 @@ export function PlayPage() {
             </div>
           ) : null}
 
+          {showBriefingPanel && playerBriefing ? (
+            <div className="absolute inset-x-0 top-[12vh] z-20 px-4 md:top-[12%]">
+              <PlayerBriefingPanel
+                briefing={playerBriefing}
+                isPreparing={isStarting}
+                onConfirm={() => setIsBriefingConfirmed(true)}
+              />
+            </div>
+          ) : null}
+
           {showGameOver && latestResult?.ending ? (
             <GameOverScreen
               endingTitle={latestResult.ending.title}
@@ -578,61 +595,63 @@ export function PlayPage() {
             />
           ) : (
             <>
-              <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
-                <section
-                  role="button"
-                  tabIndex={canAdvance ? 0 : -1}
-                  aria-label="点击继续"
-                  onClick={canAdvance ? () => advance() : undefined}
-                  className={`mx-auto flex max-w-4xl flex-col gap-3 rounded-lg border bg-background/78 p-4 shadow-2xl backdrop-blur-md md:p-5 ${canAdvance ? 'cursor-pointer' : ''}`}
-                >
-                  <div className="flex min-h-[112px] flex-col gap-3">
-                    {isStarting ? (
-                      <div className="flex items-center gap-3 text-muted-foreground">
-                        <Loader2 className="animate-spin" data-icon />
-                        <span>正在准备游戏会话...</span>
-                      </div>
-                    ) : null}
-
-                    {error ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2 text-destructive">
-                          <RefreshCcw className="size-4" />
-                          <span className="font-medium">会话暂不可用</span>
+              {!showBriefingPanel ? (
+                <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 md:px-8 md:pb-8">
+                  <section
+                    role="button"
+                    tabIndex={canAdvance ? 0 : -1}
+                    aria-label="点击继续"
+                    onClick={canAdvance ? () => advance() : undefined}
+                    className={`mx-auto flex max-w-4xl flex-col gap-3 rounded-lg border bg-background/78 p-4 shadow-2xl backdrop-blur-md md:p-5 ${canAdvance ? 'cursor-pointer' : ''}`}
+                  >
+                    <div className="flex min-h-[112px] flex-col gap-3">
+                      {isStarting ? (
+                        <div className="flex items-center gap-3 text-muted-foreground">
+                          <Loader2 className="animate-spin" data-icon />
+                          <span>正在准备游戏会话...</span>
                         </div>
-                        <p className="break-words text-sm leading-6 text-muted-foreground">{error}</p>
-                        <Button type="button" variant="outline" className="w-fit" onClick={() => void navigate({ to: '/' })}>
-                          返回游戏库
-                        </Button>
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    {!isStarting && !error && currentLines.length > 0 ? (
-                      <div
-                        ref={narrativeScrollRef}
-                        className="max-h-[25vh] overflow-y-auto pr-3"
-                      >
-                        <div className="flex flex-col gap-2 text-base leading-7 text-foreground md:text-lg">
-                          <p key={`${currentTurn?.id ?? 'turn'}-${activeIndex}`} className="text-pretty">
-                            {visibleNarrativeLine}
-                            {phase === 'typing' && !showChoicePanel ? (
-                              <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-foreground align-[-0.1em]" />
-                            ) : null}
-                          </p>
+                      {error ? (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2 text-destructive">
+                            <RefreshCcw className="size-4" />
+                            <span className="font-medium">会话暂不可用</span>
+                          </div>
+                          <p className="break-words text-sm leading-6 text-muted-foreground">{error}</p>
+                          <Button type="button" variant="outline" className="w-fit" onClick={() => void navigate({ to: '/' })}>
+                            返回游戏库
+                          </Button>
                         </div>
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    {!isStarting && !error && currentLines.length === 0 ? (
-                      <p className="text-base leading-7 text-muted-foreground">等待 AI 主持生成开场叙事...</p>
-                    ) : null}
-                  </div>
+                      {!isStarting && !error && currentLines.length > 0 ? (
+                        <div
+                          ref={narrativeScrollRef}
+                          className="max-h-[25vh] overflow-y-auto pr-3"
+                        >
+                          <div className="flex flex-col gap-2 text-base leading-7 text-foreground md:text-lg">
+                            <p key={`${currentTurn?.id ?? 'turn'}-${activeIndex}`} className="text-pretty">
+                              {visibleNarrativeLine}
+                              {phase === 'typing' && !showChoicePanel ? (
+                                <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-foreground align-[-0.1em]" />
+                              ) : null}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
 
-                  {!isStarting && !error && phase === 'waiting' && !showChoicePanel ? (
-                    <ChevronDown className="absolute bottom-4 right-5 size-5 animate-bounce text-muted-foreground" />
-                  ) : null}
-                </section>
-              </div>
+                      {!isStarting && !error && currentLines.length === 0 ? (
+                        <p className="text-base leading-7 text-muted-foreground">等待 AI 主持生成开场叙事...</p>
+                      ) : null}
+                    </div>
+
+                    {!isStarting && !error && phase === 'waiting' && !showChoicePanel ? (
+                      <ChevronDown className="absolute bottom-4 right-5 size-5 animate-bounce text-muted-foreground" />
+                    ) : null}
+                  </section>
+                </div>
+              ) : null}
 
               {showChoicePanel && choiceTool ? (
                 <section

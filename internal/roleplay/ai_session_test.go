@@ -110,6 +110,28 @@ func TestNewLibraryGameSupportsLegacyTTitle(t *testing.T) {
 	}
 }
 
+func TestNewLibraryGameRecognizesPlayerBriefing(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json":        `{"title":"带开局规则的规则怪谈"}`,
+		PlayerBriefingFileName: `{"title":"你需要记住的规则","items":[{"id":"feed-dog","text":"记得给狗喂食"}]}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil || game.Files[PlayerBriefingFileName] == "" {
+		t.Fatalf("expected imported game with briefing, got game=%#v report=%#v", game, report)
+	}
+	if !slices.Contains(report.ValidFiles, PlayerBriefingFileName) {
+		t.Fatalf("expected briefing valid file, got %#v", report.ValidFiles)
+	}
+}
+
 func TestNewLibraryGameParsesPhotoScenes(t *testing.T) {
 	pack := loadExamplePack(t)
 	files := map[string]string{
@@ -470,6 +492,27 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	}
 	if !strings.Contains(userPrompt, updatedRule) {
 		t.Fatal("expected prompt to include fresh rule.md from session workspace")
+	}
+}
+
+func TestBuildMessagesIncludesPlayerVisibleBriefing(t *testing.T) {
+	pack := loadExamplePack(t)
+	pack.Files[PlayerBriefingFileName] = `{"title":"你需要记住的规则","items":[{"id":"feed-dog","text":"记得给狗喂食"}]}`
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	messages := BuildMessages(pack, session, nil, "")
+	userPrompt := messages[1].Content
+	if !strings.Contains(userPrompt, "player-visible briefing.json") {
+		t.Fatal("expected prompt to include player-visible briefing section")
+	}
+	if !strings.Contains(userPrompt, "记得给狗喂食") {
+		t.Fatal("expected prompt to include briefing content")
+	}
+	if !strings.Contains(userPrompt, "属于用户已知信息") {
+		t.Fatal("expected prompt to mark briefing as player-visible")
 	}
 }
 

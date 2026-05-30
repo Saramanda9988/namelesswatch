@@ -179,6 +179,12 @@ func BuildMessagesWithBudget(pack StoryPack, session *GameSession, terminalResul
 		builder.WriteString(limitRunes(promptStoryFile(pack, session, fileName), budget.StoryFileRuneBudget))
 		builder.WriteString("\n")
 	}
+	if briefing := strings.TrimSpace(pack.Files[strings.ToLower(PlayerBriefingFileName)]); briefing != "" {
+		builder.WriteString("\n--- player-visible briefing.json ---\n")
+		builder.WriteString("以下内容已经在开局前展示给用户，属于用户已知信息，不是隐藏真相。\n")
+		builder.WriteString(limitRunes(briefing, budget.StoryFileRuneBudget))
+		builder.WriteString("\n")
+	}
 	builder.WriteString("\n--- current memory.md ---\n")
 	builder.WriteString(memory)
 	builder.WriteString("\n\n--- context_summary.md ---\n")

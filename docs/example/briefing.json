@@ -1,0 +1,23 @@
+{
+  "title": "你需要记住的规则",
+  "description": "在游戏开始前，请先确认这些规则。",
+  "items": [
+    {
+      "id": "feed-dog",
+      "text": "记得给狗喂食"
+    },
+    {
+      "id": "feed-self",
+      "text": "记得给自己喂食"
+    },
+    {
+      "id": "ask-help",
+      "text": "遇到不对劲的事情向邻居求助，向好朋友求证，父母的电话无法打通"
+    },
+    {
+      "id": "school-time",
+      "text": "按时上下学"
+    }
+  ],
+  "confirmText": "我已记住"
+}
