@@ -14,6 +14,8 @@ type GameService struct {
 	config   appconf.AppConfig
 	packs    map[string]roleplay.StoryPack
 	sessions map[string]*roleplay.GameSession
+	games    map[string]roleplay.LibraryGame
+	gameIDs  []string
 }
 
 func NewGameService(config *appconf.AppConfig) *GameService {
@@ -25,6 +27,8 @@ func NewGameService(config *appconf.AppConfig) *GameService {
 		config:   initialConfig,
 		packs:    make(map[string]roleplay.StoryPack),
 		sessions: make(map[string]*roleplay.GameSession),
+		games:    make(map[string]roleplay.LibraryGame),
+		gameIDs:  []string{},
 	}
 }
 
@@ -56,6 +60,42 @@ func (s *GameService) RegisterGamePack(gameID string, files map[string]string) e
 	return nil
 }
 
+func (s *GameService) ImportGamePack(files map[string]string) (roleplay.ImportGameResult, error) {
+	game, result, err := roleplay.NewLibraryGame(files)
+	if err != nil {
+		return result, err
+	}
+	if result.Game == nil {
+		return result, nil
+	}
+
+	pack, err := roleplay.NewStoryPack(game.ID, game.Files)
+	if err != nil {
+		return roleplay.ImportGameResult{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.games[game.ID] = game
+	s.gameIDs = append([]string{game.ID}, s.gameIDs...)
+	s.packs[game.ID] = pack
+
+	return result, nil
+}
+
+func (s *GameService) GetGames() ([]roleplay.LibraryGame, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	games := make([]roleplay.LibraryGame, 0, len(s.gameIDs))
+	for _, gameID := range s.gameIDs {
+		if game, ok := s.games[gameID]; ok {
+			games = append(games, cloneLibraryGame(game))
+		}
+	}
+	return games, nil
+}
+
 func (s *GameService) StartGame(gameID string) (roleplay.GameTurnResult, error) {
 	s.mu.Lock()
 	pack, ok := s.packs[gameID]
@@ -74,6 +114,17 @@ func (s *GameService) StartGame(gameID string) (roleplay.GameTurnResult, error) 
 	s.mu.Unlock()
 
 	return s.advanceSession(session.ID)
+}
+
+func cloneLibraryGame(game roleplay.LibraryGame) roleplay.LibraryGame {
+	files := make(map[string]string, len(game.Files))
+	for name, content := range game.Files {
+		files[name] = content
+	}
+	game.Files = files
+	game.PhotoURLs = append([]string{}, game.PhotoURLs...)
+	game.MapURLs = append([]string{}, game.MapURLs...)
+	return game
 }
 
 func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.GameTurnResult, error) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,33 @@ func TestNewStoryPackRequiresStandardFiles(t *testing.T) {
 	delete(pack.Files, "true.md")
 	if _, err := NewStoryPack("missing", pack.Files); err == nil || !strings.Contains(err.Error(), "true.md") {
 		t.Fatalf("expected missing true.md error, got %v", err)
+	}
+}
+
+func TestNewLibraryGameRequiresMetadataTitle(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json": `{"ttitle":"示例规则怪谈"}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil || game.Title != "示例规则怪谈" {
+		t.Fatalf("expected metadata title, got game=%#v report=%#v", game, report)
+	}
+
+	delete(files, "metadata.json")
+	_, report, err = NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("missing metadata should be reported, not returned as error: %v", err)
+	}
+	if !slices.Contains(report.Missing, "metadata.json") {
+		t.Fatalf("expected missing metadata.json, got %#v", report.Missing)
 	}
 }
 

@@ -5,7 +5,11 @@ import {roleplay} from '../models';
 
 export function GetAppConfig():Promise<appconf.AppConfig>;
 
+export function GetGames():Promise<Array<roleplay.LibraryGame>>;
+
 export function GetSession(arg1:string):Promise<roleplay.GameSession>;
+
+export function ImportGamePack(arg1:Record<string, string>):Promise<roleplay.ImportGameResult>;
 
 export function RegisterGamePack(arg1:string,arg2:Record<string, string>):Promise<void>;
 

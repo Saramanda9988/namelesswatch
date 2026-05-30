@@ -6,8 +6,16 @@ export function GetAppConfig() {
   return window['go']['main']['App']['GetAppConfig']();
 }
 
+export function GetGames() {
+  return window['go']['main']['App']['GetGames']();
+}
+
 export function GetSession(arg1) {
   return window['go']['main']['App']['GetSession'](arg1);
+}
+
+export function ImportGamePack(arg1) {
+  return window['go']['main']['App']['ImportGamePack'](arg1);
 }
 
 export function RegisterGamePack(arg1, arg2) {

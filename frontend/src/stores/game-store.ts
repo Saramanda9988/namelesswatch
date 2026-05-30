@@ -1,20 +1,28 @@
 import { create } from 'zustand'
 
-import { GetAppConfig, UpdateAppConfig } from '../../wailsjs/go/main/App'
-import { mockGames } from '@/data/mock-games'
-import type { AppConfig, GameSettings, ImportedGame } from '@/types/game'
+import { GetAppConfig, GetGames, ImportGamePack, UpdateAppConfig } from '../../wailsjs/go/main/App'
+import type { appconf, roleplay } from '../../wailsjs/go/models'
+
+type GameSettings = {
+  textSpeed: number
+  autoAdvance: boolean
+  showMap: boolean
+  voiceVolume: number
+  uiScale: number
+}
 
 type GameState = {
-  games: ImportedGame[]
+  games: roleplay.LibraryGame[]
   activeGameId?: string
   settings: GameSettings
-  config?: AppConfig
-  draftConfig?: AppConfig
-  addGame: (game: ImportedGame) => void
+  config?: appconf.AppConfig
+  draftConfig?: appconf.AppConfig
+  fetchGames: () => Promise<void>
+  importGameFiles: (files: Record<string, string>) => Promise<roleplay.ImportGameResult>
   setActiveGame: (gameId: string) => void
   updateSettings: (settings: Partial<GameSettings>) => void
   fetchConfig: () => Promise<void>
-  setDraftConfig: (config: AppConfig) => void
+  setDraftConfig: (config: appconf.AppConfig) => void
   resetDraftConfig: () => void
   saveDraftConfig: () => Promise<void>
 }
@@ -28,13 +36,18 @@ const initialSettings: GameSettings = {
 }
 
 export const useGameStore = create<GameState>((set) => ({
-  games: mockGames,
+  games: [],
   settings: initialSettings,
-  addGame: (game) =>
-    set((state) => ({
-      games: [game, ...state.games.filter((item) => item.id !== game.id)],
-      activeGameId: game.id,
-    })),
+  fetchGames: async () => {
+    const games = await GetGames()
+    set({ games })
+  },
+  importGameFiles: async (files) => {
+    const result = await ImportGamePack(files)
+    const games = await GetGames()
+    set({ games })
+    return result
+  },
   setActiveGame: (gameId) => set({ activeGameId: gameId }),
   updateSettings: (settings) =>
     set((state) => ({
@@ -44,7 +57,7 @@ export const useGameStore = create<GameState>((set) => ({
       },
     })),
   fetchConfig: async () => {
-    const config = await GetAppConfig() as AppConfig
+    const config = await GetAppConfig()
     set({
       config,
       draftConfig: { ...config },

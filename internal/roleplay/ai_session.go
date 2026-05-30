@@ -12,6 +12,14 @@ import (
 
 const maxTerminalRounds = 3
 
+const gameHostInstructions = `你是一个规则怪谈的主持人，请遵守以下规则，和用户进行一次规则怪谈的游玩
+
+1. 故事的开头大纲在 @scene.md 中，故事结局在 endings.md 
+2. 必须遵守 @rule.md 中的规则，你的所有场景描写，对用户的引导，都必须遵守规则
+3. @ture.md 是故事的真相，不能让用户知晓，你自己用作逻辑推断即可
+4. @memory.md 是你的记事本，用户的前后操作的关联，可能走向的结局，可以记录在里面让你参考
+5. 请按照描述故事的方法进行叙述，包含一定的场景描写，但是切记你在讲故事，对用户的称呼始终是你`
+
 func RunAITurn(ctx context.Context, client ChatCompleter, pack StoryPack, session *GameSession) (GameTurnResult, error) {
 	var terminalResults []TerminalExecution
 
@@ -80,15 +88,6 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	}
 
 	var builder strings.Builder
-	builder.WriteString("你是规则怪谈游戏主持人。必须遵守剧情包规则，只能输出严格 JSON，不允许 Markdown 包裹或额外解释。\n")
-	builder.WriteString("不要直接泄露 true.md 的隐藏真相；前端只会展示 game_turn.payload。\n")
-	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
-	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")
-	builder.WriteString("agent_terminal 不会展示给用户。不要依赖或输出本机绝对路径。\n\n")
-	builder.WriteString("输出协议：\n")
-	builder.WriteString(`game_turn: {"type":"game_turn","state":"continue","payload":["..."],"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
-	builder.WriteString(`ended: {"type":"game_turn","state":"ended","payload":["..."],"tools":[],"ending":{"id":"...","title":"...","kind":"good|bad|loop|neutral"}}` + "\n")
-	builder.WriteString(`agent_terminal: {"type":"agent_terminal","reason":"...","commands":[{"command":"..."}]}` + "\n\n")
 	builder.WriteString("Story Pack:\n")
 	for _, fileName := range []string{"scene.md", "rule.md", "true.md", "endings.md"} {
 		builder.WriteString("\n--- " + fileName + " ---\n")
@@ -124,9 +123,24 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 	}
 
 	return []ChatMessage{
-		{Role: "system", Content: "你是一个严格遵循 JSON 输出协议的 AI 规则怪谈主持人。"},
+		{Role: "system", Content: BuildSystemPrompt()},
 		{Role: "user", Content: builder.String()},
 	}
+}
+
+func BuildSystemPrompt() string {
+	var builder strings.Builder
+	builder.WriteString(gameHostInstructions)
+	builder.WriteString("\n\n输出格式要求：\n")
+	builder.WriteString("必须只输出严格 JSON，不允许 Markdown 包裹或额外解释。\n")
+	builder.WriteString("不要直接泄露 true.md 的隐藏真相；前端只会展示 game_turn.payload。\n")
+	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
+	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")
+	builder.WriteString("agent_terminal 不会展示给用户。不要依赖或输出本机绝对路径。\n\n")
+	builder.WriteString(`game_turn: {"type":"game_turn","state":"continue","payload":["..."],"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
+	builder.WriteString(`ended: {"type":"game_turn","state":"ended","payload":["..."],"tools":[],"ending":{"id":"...","title":"...","kind":"good|bad|loop|neutral"}}` + "\n")
+	builder.WriteString(`agent_terminal: {"type":"agent_terminal","reason":"...","commands":[{"command":"..."}]}`)
+	return builder.String()
 }
 
 func recentTurns(turns []GameTurn, limit int) []GameTurn {

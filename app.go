@@ -50,6 +50,14 @@ func (a *App) RegisterGamePack(gameID string, files map[string]string) error {
 	return a.gameService.RegisterGamePack(gameID, files)
 }
 
+func (a *App) ImportGamePack(files map[string]string) (roleplay.ImportGameResult, error) {
+	return a.gameService.ImportGamePack(files)
+}
+
+func (a *App) GetGames() ([]roleplay.LibraryGame, error) {
+	return a.gameService.GetGames()
+}
+
 func (a *App) StartGame(gameID string) (roleplay.GameTurnResult, error) {
 	return a.gameService.StartGame(gameID)
 }

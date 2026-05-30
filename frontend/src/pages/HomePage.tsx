@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { BookOpen, Filter, FolderPlus, Gamepad2, Play, Search, Settings, Upload } from 'lucide-react'
+import { BookOpen, FolderPlus, Gamepad2, Play, Settings } from 'lucide-react'
 import * as React from 'react'
 
 import { AspectRatio } from '@/components/ui/aspect-ratio'
@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { importGameFromFiles } from '@/lib/import-game'
 import { useGameStore } from '@/stores/game-store'
 
 const directoryInputProps = {
@@ -23,10 +22,15 @@ const directoryInputProps = {
 export function HomePage() {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const games = useGameStore((state) => state.games)
-  const addGame = useGameStore((state) => state.addGame)
+  const fetchGames = useGameStore((state) => state.fetchGames)
+  const importGameFiles = useGameStore((state) => state.importGameFiles)
   const [status, setStatus] = React.useState('等待资源包')
   const [isImporting, setIsImporting] = React.useState(false)
   const [search, setSearch] = React.useState('')
+
+  React.useEffect(() => {
+    void fetchGames()
+  }, [fetchGames])
 
   const visibleGames = React.useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -35,7 +39,7 @@ export function HomePage() {
     }
 
     return games.filter((game) => {
-      const firstLine = (game.files['scene.md'] || game.script[0]?.text || '').toLowerCase()
+      const firstLine = (game.files?.['scene.md'] || '').toLowerCase()
       return game.title.toLowerCase().includes(keyword) || firstLine.includes(keyword)
     })
   }, [games, search])
@@ -47,19 +51,24 @@ export function HomePage() {
     }
 
     setIsImporting(true)
-    const report = await importGameFromFiles(selectedFiles)
+    try {
+      const fileContents = await readStoryFolderFiles(selectedFiles)
+      const report = await importGameFiles(fileContents)
 
-    if (!report.game) {
-      setStatus(`缺少文件：${report.missing.join('、')}；已识别：${report.validFiles.join('、') || '无'}`)
+      if (!report.game) {
+        setStatus(`缺少文件：${report.missing.join('、')}；已识别：${report.validFiles.join('、') || '无'}`)
+        return
+      }
+
+      setStatus(report.warnings.length > 0 ? report.warnings.join(' ') : `已导入并验证：${report.game.title}`)
+    }
+    catch (cause) {
+      setStatus(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
       setIsImporting(false)
       event.currentTarget.value = ''
-      return
     }
-
-    addGame(report.game)
-    setStatus(report.warnings.length > 0 ? report.warnings.join(' ') : `已导入并验证：${report.game.title}`)
-    setIsImporting(false)
-    event.currentTarget.value = ''
   }
 
   return (
@@ -129,7 +138,7 @@ export function HomePage() {
               {visibleGames.map((game) => (
                 <Card key={game.id} className="group overflow-hidden rounded-xl border-[#343a43] bg-[#1a1d20] p-0 text-[#f4f5f7] transition-colors hover:border-[#59677e]">
                   <AspectRatio ratio={0.74} className="relative bg-[#22262b]">
-                    {game.photoUrls[0] ? (
+                    {game.photoUrls?.[0] ? (
                       <img src={game.photoUrls[0]} alt="" className="size-full object-cover transition duration-300 group-hover:scale-105" />
                     ) : (
                       <div className="grid size-full place-items-center bg-[#23272d] text-[#596170]">
@@ -158,4 +167,21 @@ export function HomePage() {
       </main>
     </div>
   )
+}
+
+async function readStoryFolderFiles(fileList: FileList) {
+  const selectedFiles = Array.from(fileList)
+  const textFiles = selectedFiles.filter((file) => {
+    const name = fileNameOf(file).toLowerCase()
+    return name === 'metadata.json' || name.endsWith('.md')
+  })
+
+  const entries = await Promise.all(
+    textFiles.map(async (file) => [fileNameOf(file).toLowerCase(), await file.text()] as const),
+  )
+  return Object.fromEntries(entries)
+}
+
+function fileNameOf(file: File) {
+  return (file.webkitRelativePath || file.name).replaceAll('\\', '/').split('/').at(-1) || file.name
 }

@@ -3,6 +3,7 @@ package roleplay
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,9 +23,31 @@ const (
 
 var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md", "endings.md"}
 
+const MetadataFileName = "metadata.json"
+
 type StoryPack struct {
 	ID    string            `json:"id"`
 	Files map[string]string `json:"files"`
+}
+
+type GameMetadata struct {
+	TTitle string `json:"ttitle"`
+}
+
+type LibraryGame struct {
+	ID         string            `json:"id"`
+	Title      string            `json:"title"`
+	ImportedAt string            `json:"importedAt"`
+	Files      map[string]string `json:"files"`
+	PhotoURLs  []string          `json:"photoUrls"`
+	MapURLs    []string          `json:"mapUrls"`
+}
+
+type ImportGameResult struct {
+	Game       *LibraryGame `json:"game,omitempty"`
+	Missing    []string     `json:"missing"`
+	Warnings   []string     `json:"warnings"`
+	ValidFiles []string     `json:"validFiles"`
 }
 
 type GameSession struct {
@@ -119,6 +142,80 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 		ID:    gameID,
 		Files: normalized,
 	}, nil
+}
+
+func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, error) {
+	normalized := normalizeFileContents(files)
+	validFiles := make([]string, 0, len(RequiredStoryFiles)+1)
+	for _, fileName := range append([]string{MetadataFileName}, RequiredStoryFiles...) {
+		if _, ok := normalized[fileName]; ok {
+			validFiles = append(validFiles, fileName)
+		}
+	}
+
+	missing := requiredImportFilesMissing(normalized)
+	if len(missing) > 0 {
+		return LibraryGame{}, ImportGameResult{
+			Missing:    missing,
+			Warnings:   []string{},
+			ValidFiles: validFiles,
+		}, nil
+	}
+
+	var metadata GameMetadata
+	if err := json.Unmarshal([]byte(normalized[MetadataFileName]), &metadata); err != nil {
+		return LibraryGame{}, ImportGameResult{
+			Missing:    []string{},
+			Warnings:   []string{"metadata.json 解析失败"},
+			ValidFiles: validFiles,
+		}, fmt.Errorf("parse metadata.json: %w", err)
+	}
+
+	title := strings.TrimSpace(metadata.TTitle)
+	if title == "" {
+		return LibraryGame{}, ImportGameResult{
+			Missing:    []string{"metadata.json:ttitle"},
+			Warnings:   []string{},
+			ValidFiles: validFiles,
+		}, nil
+	}
+
+	game := LibraryGame{
+		ID:         NewID("game"),
+		Title:      title,
+		ImportedAt: NowISO(),
+		Files:      normalized,
+		PhotoURLs:  []string{},
+		MapURLs:    []string{},
+	}
+
+	return game, ImportGameResult{
+		Game:       &game,
+		Missing:    []string{},
+		Warnings:   []string{},
+		ValidFiles: validFiles,
+	}, nil
+}
+
+func normalizeFileContents(files map[string]string) map[string]string {
+	normalized := make(map[string]string, len(files))
+	for name, content := range files {
+		normalized[strings.ToLower(filepath.Base(strings.ReplaceAll(name, "\\", "/")))] = content
+	}
+	return normalized
+}
+
+func requiredImportFilesMissing(files map[string]string) []string {
+	var missing []string
+	if _, ok := files[MetadataFileName]; !ok {
+		missing = append(missing, MetadataFileName)
+	}
+	for _, fileName := range RequiredStoryFiles {
+		if _, ok := files[fileName]; !ok {
+			missing = append(missing, fileName)
+		}
+	}
+	return missing
 }
 
 func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {

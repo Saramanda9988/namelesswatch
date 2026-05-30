@@ -9,13 +9,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/game-store'
-import type { ChoiceTool, GameTurn, GameTurnResult } from '@/types/game'
+import type { roleplay } from '../../wailsjs/go/models'
 
-function isRenderableTurn(turn: GameTurn) {
+function isRenderableTurn(turn: roleplay.GameTurn) {
   return turn.role === 'ai' && turn.payload.length > 0
 }
 
-function choiceToolFrom(result?: GameTurnResult): ChoiceTool | undefined {
+function choiceToolFrom(result?: roleplay.GameTurnResult): roleplay.ChoiceTool | undefined {
   if (!result || result.state === 'ended') {
     return undefined
   }
@@ -29,8 +29,8 @@ export function PlayPage() {
   const setActiveGame = useGameStore((state) => state.setActiveGame)
   const game = games.find((item) => item.id === gameId)
   const [sessionId, setSessionId] = React.useState<string>()
-  const [latestResult, setLatestResult] = React.useState<GameTurnResult>()
-  const [turns, setTurns] = React.useState<GameTurn[]>([])
+  const [latestResult, setLatestResult] = React.useState<roleplay.GameTurnResult>()
+  const [turns, setTurns] = React.useState<roleplay.GameTurn[]>([])
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
@@ -60,7 +60,7 @@ export function PlayPage() {
     async function start() {
       try {
         await RegisterGamePack(currentGame.id, currentGame.files)
-        const result = await StartGame(currentGame.id) as GameTurnResult
+        const result = await StartGame(currentGame.id)
         if (cancelled) {
           return
         }
@@ -95,7 +95,7 @@ export function PlayPage() {
     setPendingChoiceId(choiceId)
     setError(undefined)
     try {
-      const result = await SubmitChoice(sessionId, choiceId) as GameTurnResult
+      const result = await SubmitChoice(sessionId, choiceId)
       setLatestResult(result)
       setTurns((currentTurns) => [...currentTurns, result.turn])
     }
@@ -167,8 +167,8 @@ export function PlayPage() {
                 <CardHeader className="flex-row items-center gap-3">
                   <Loader2 className="animate-spin" data-icon />
                   <div>
-                    <CardTitle className="text-base">正在生成首回合</CardTitle>
-                    <CardDescription>后端会创建独立 workspace，并把剧情文档复制到当前会话。</CardDescription>
+                    <CardTitle className="text-base">正在准备游戏</CardTitle>
+                    <CardDescription>后端正在创建当前会话。</CardDescription>
                   </div>
                 </CardHeader>
               </Card>

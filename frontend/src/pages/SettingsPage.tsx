@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useGameStore } from '@/stores/game-store'
-import type { AppConfig } from '@/types/game'
+import type { appconf } from '../../wailsjs/go/models'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -85,7 +85,7 @@ export function SettingsPage() {
     return () => window.clearTimeout(timer)
   }, [config, draftConfig, saveDraftConfig])
 
-  function patchConfig(patch: Partial<AppConfig>) {
+  function patchConfig(patch: Partial<appconf.AppConfig>) {
     if (!draftConfig) {
       return
     }
