@@ -65,6 +65,30 @@ const eventMemoryPlaceholders = [
   'ai引导对话和主人公选择语句',
 ]
 
+const startGameRequests = new globalThis.Map<string, Promise<roleplay.GameTurnResult>>()
+
+function startGameOnce(game: roleplay.LibraryGame) {
+  const existingRequest = startGameRequests.get(game.id)
+  if (existingRequest) {
+    logRuntimeInfo(`[play] start attached game=${game.id} title=${game.title}`)
+    return existingRequest
+  }
+
+  logRuntimeInfo(`[play] start requested game=${game.id} title=${game.title}`)
+  const request = RegisterGamePack(game.id, game.files)
+    .then(() => StartGame(game.id))
+    .finally(() => {
+      window.setTimeout(() => {
+        if (startGameRequests.get(game.id) === request) {
+          startGameRequests.delete(game.id)
+        }
+      }, 1000)
+    })
+
+  startGameRequests.set(game.id, request)
+  return request
+}
+
 export function PlayPage() {
   const { gameId } = useParams({ from: '/play/$gameId' })
   const navigate = useNavigate()
@@ -77,7 +101,6 @@ export function PlayPage() {
   const [error, setError] = React.useState<string>()
   const [isStarting, setIsStarting] = React.useState(true)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
-  const startedGameIdRef = React.useRef<string | undefined>(undefined)
 
   React.useEffect(() => {
     if (!game) {
@@ -87,13 +110,12 @@ export function PlayPage() {
   }, [game, setActiveGame])
 
   React.useEffect(() => {
-    if (!game || startedGameIdRef.current === game.id) {
+    if (!game) {
       return
     }
 
     let cancelled = false
     const currentGame = game
-    startedGameIdRef.current = game.id
     setIsStarting(true)
     setError(undefined)
     setTurns([])
@@ -102,9 +124,7 @@ export function PlayPage() {
 
     async function start() {
       try {
-        logRuntimeInfo(`[play] start requested game=${currentGame.id} title=${currentGame.title}`)
-        await RegisterGamePack(currentGame.id, currentGame.files)
-        const result = await StartGame(currentGame.id)
+        const result = await startGameOnce(currentGame)
         if (cancelled) {
           return
         }
@@ -130,9 +150,6 @@ export function PlayPage() {
 
     return () => {
       cancelled = true
-      if (startedGameIdRef.current === currentGame.id) {
-        startedGameIdRef.current = undefined
-      }
     }
   }, [game])
 

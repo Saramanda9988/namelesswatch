@@ -140,6 +140,10 @@ func BuildMessages(pack StoryPack, session *GameSession, terminalResults []Termi
 		}
 		builder.WriteString("\n")
 	}
+	if len(session.Turns) == 0 {
+		builder.WriteString("\nCurrent Objective:\n")
+		builder.WriteString("这是游戏第一回合。只能从 scene.md 的开场处开始，不能假设用户已经做出任何选择，不能跳到规则后果或 endings.md 中的结局。\n")
+	}
 
 	if len(terminalResults) > 0 {
 		builder.WriteString("\nTerminal Results:\n")
@@ -168,6 +172,7 @@ func BuildSystemPrompt() string {
 	builder.WriteString("必须只输出严格 JSON，不允许 Markdown 包裹或额外解释。\n")
 	builder.WriteString("不要直接泄露 true.md 的隐藏真相；前端只会展示 game_turn.payload。\n")
 	builder.WriteString("用户只能通过 choice 工具行动。continue 状态必须包含一个 choice 工具，选项 2 到 4 个。\n")
+	builder.WriteString("第一回合必须是开场叙事：从 scene.md 当前情境开始，不能假设用户已经行动，不能直接触发 endings.md 的任何结局。\n")
 	builder.WriteString("如果需要读取剧情文档或更新 memory.md，可以返回 agent_terminal；terminal 工作目录已固定为当前会话 workspace，请使用相对路径。\n")
 	builder.WriteString("agent_terminal 不会展示给用户。不要依赖或输出本机绝对路径。\n\n")
 	builder.WriteString(`game_turn: {"type":"game_turn","state":"continue","payload":["..."],"tools":[{"type":"choice","id":"main","prompt":"你要怎么做？","options":[{"id":"...","label":"..."}]}]}` + "\n")
