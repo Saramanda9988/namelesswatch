@@ -3,5 +3,6 @@
     "living_room": "客厅背景.png",
     "bedroom": "卧室背景.png",
     "bathroom": "卫生间背景.png",
-    "kitchen": "厨房背景.png"
+    "kitchen": "厨房背景.png",
+    "game_over": "game_over.png"
 }
