@@ -105,6 +105,29 @@ func GetConfigDir() (string, error) {
 	return filepath.Join(configDir, "namelesswatch"), nil
 }
 
+func GetDataDir() (string, error) {
+	dataDir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return "", fmt.Errorf("create data directory: %w", err)
+	}
+	return dataDir, nil
+}
+
+func GetSubDir(subPath string) (string, error) {
+	dataDir, err := GetDataDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(dataDir, subPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create sub directory %q: %w", subPath, err)
+	}
+	return dir, nil
+}
+
 func getConfigPath() (string, error) {
 	configDir, err := GetConfigDir()
 	if err != nil {

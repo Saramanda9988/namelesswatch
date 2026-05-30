@@ -229,7 +229,13 @@ func (s *GameService) StartGame(gameID string) (roleplay.GameTurnResult, error) 
 		return roleplay.GameTurnResult{}, errors.New("story pack is not registered in backend")
 	}
 
-	session, err := roleplay.NewGameSession(gameID, pack)
+	sessionsRoot, err := appconf.GetSubDir("sessions")
+	if err != nil {
+		s.logErrorf("start_game session_root_failed game=%s error=%v", gameID, err)
+		return roleplay.GameTurnResult{}, err
+	}
+
+	session, err := roleplay.NewGameSessionInRoot(gameID, pack, sessionsRoot)
 	if err != nil {
 		s.logErrorf("start_game session_failed game=%s error=%v", gameID, err)
 		return roleplay.GameTurnResult{}, err

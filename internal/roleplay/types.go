@@ -231,7 +231,24 @@ func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create session workspace: %w", err)
 	}
+	return NewGameSessionInWorkspace(gameID, pack, workspace)
+}
 
+func NewGameSessionInRoot(gameID string, pack StoryPack, sessionsRoot string) (*GameSession, error) {
+	sessionID := NewID("session")
+	workspace := filepath.Join(sessionsRoot, safePathSegment(gameID), sessionID)
+	session, err := NewGameSessionInWorkspace(gameID, pack, workspace)
+	if err != nil {
+		return nil, err
+	}
+	session.ID = sessionID
+	return session, nil
+}
+
+func NewGameSessionInWorkspace(gameID string, pack StoryPack, workspace string) (*GameSession, error) {
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return nil, fmt.Errorf("create session workspace: %w", err)
+	}
 	for _, fileName := range RequiredStoryFiles {
 		if err := os.WriteFile(filepath.Join(workspace, fileName), []byte(pack.Files[fileName]), 0o600); err != nil {
 			return nil, fmt.Errorf("copy %s to session workspace: %w", fileName, err)
@@ -249,6 +266,29 @@ func NewGameSession(gameID string, pack StoryPack) (*GameSession, error) {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}, nil
+}
+
+func safePathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		"\"", "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+	)
+	value = replacer.Replace(value)
+	if value == "." || value == ".." {
+		return "unknown"
+	}
+	return value
 }
 
 func (s *GameSession) AppendTurn(turn GameTurn) {
