@@ -43,6 +43,8 @@ type SessionSummary struct {
 	UpdatedAt  string `json:"updatedAt"`
 }
 
+const maxCustomChoiceRunes = 240
+
 func NewGameService(config *appconf.AppConfig) *GameService {
 	initialConfig := appconf.AppConfig{}
 	if config != nil {
@@ -479,34 +481,71 @@ func (s *GameService) SubmitChoice(sessionID string, choiceID string) (roleplay.
 		}
 	}
 
+	result, done, err := s.appendUserChoiceTurn(sessionID, choiceID, "", false)
+	if done || err != nil {
+		return result, err
+	}
+
+	return s.advanceSession(sessionID)
+}
+
+func (s *GameService) SubmitCustomChoice(sessionID string, reply string) (roleplay.GameTurnResult, error) {
+	label, err := normalizeCustomChoice(reply)
+	if err != nil {
+		return roleplay.GameTurnResult{}, err
+	}
+
+	choiceID := roleplay.NewID("custom")
+	s.logInfof("submit_custom_choice requested session=%s choice=%s", sessionID, choiceID)
+	result, done, err := s.appendUserChoiceTurn(sessionID, choiceID, label, true)
+	if done || err != nil {
+		return result, err
+	}
+	return s.advanceSession(sessionID)
+}
+
+func normalizeCustomChoice(reply string) (string, error) {
+	label := strings.Join(strings.Fields(reply), " ")
+	if label == "" {
+		return "", errors.New("custom reply is required")
+	}
+	if len([]rune(label)) > maxCustomChoiceRunes {
+		return "", fmt.Errorf("custom reply must be %d characters or less", maxCustomChoiceRunes)
+	}
+	return label, nil
+}
+
+func (s *GameService) appendUserChoiceTurn(sessionID string, choiceID string, label string, customInput bool) (roleplay.GameTurnResult, bool, error) {
 	s.mu.Lock()
-	session, ok = s.sessions[sessionID]
+	session, ok := s.sessions[sessionID]
 	if !ok {
 		s.mu.Unlock()
 		s.logErrorf("submit_choice failed session=%s error=session not found", sessionID)
-		return roleplay.GameTurnResult{}, errors.New("session not found")
+		return roleplay.GameTurnResult{}, true, errors.New("session not found")
 	}
 	if session.State == roleplay.SessionStateEnded {
 		result := roleplay.ResultFromSession(session)
 		s.mu.Unlock()
 		s.logWarningf("submit_choice ignored session=%s choice=%s reason=session already ended", sessionID, choiceID)
-		return result, nil
+		return result, true, nil
 	}
 	if s.prefetch != nil {
 		s.prefetch.cancelSession(sessionID)
 	}
-	label := session.ChoiceLabel(choiceID)
+	if label == "" {
+		label = session.ChoiceLabel(choiceID)
+	}
 	session.AppendTurn(roleplay.GameTurn{
 		ID:                  roleplay.NewID("turn"),
 		Role:                roleplay.TurnRoleUser,
 		Payload:             []string{label},
 		SelectedChoiceID:    choiceID,
 		SelectedChoiceLabel: label,
+		CustomInput:         customInput,
 		CreatedAt:           roleplay.NowISO(),
 	})
 	s.mu.Unlock()
-
-	return s.advanceSession(sessionID)
+	return roleplay.GameTurnResult{}, false, nil
 }
 
 func (s *GameService) promotePrefetchedChoice(sessionID string, baseTurnID string, choiceID string, config appconf.AppConfig) (roleplay.GameTurnResult, bool, error) {

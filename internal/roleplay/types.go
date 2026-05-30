@@ -90,6 +90,7 @@ type GameTurn struct {
 	Payload             []string     `json:"payload"`
 	SelectedChoiceID    string       `json:"selectedChoiceId,omitempty"`
 	SelectedChoiceLabel string       `json:"selectedChoiceLabel,omitempty"`
+	CustomInput         bool         `json:"customInput,omitempty"`
 	Tools               []ChoiceTool `json:"tools,omitempty"`
 	Scene               *SceneChange `json:"scene,omitempty"`
 	BGM                 *BGMChange   `json:"bgm,omitempty"`

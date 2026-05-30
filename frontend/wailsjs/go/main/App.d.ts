@@ -32,6 +32,8 @@ export function StartGame(arg1:string):Promise<roleplay.GameTurnResult>;
 
 export function SubmitChoice(arg1:string,arg2:string):Promise<roleplay.GameTurnResult>;
 
+export function SubmitCustomChoice(arg1:string,arg2:string):Promise<roleplay.GameTurnResult>;
+
 export function UpdateAppConfig(arg1:appconf.AppConfig):Promise<void>;
 
 export function UpdateGame(arg1:string,arg2:roleplay.LibraryGame):Promise<roleplay.LibraryGame>;

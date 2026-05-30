@@ -87,6 +87,10 @@ func (a *App) SubmitChoice(sessionID string, choiceID string) (roleplay.GameTurn
 	return a.gameService.SubmitChoice(sessionID, choiceID)
 }
 
+func (a *App) SubmitCustomChoice(sessionID string, reply string) (roleplay.GameTurnResult, error) {
+	return a.gameService.SubmitCustomChoice(sessionID, reply)
+}
+
 func (a *App) GetSession(sessionID string) (roleplay.GameSession, error) {
 	return a.gameService.GetSession(sessionID)
 }

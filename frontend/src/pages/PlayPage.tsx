@@ -8,6 +8,7 @@ import {
   Moon,
   RefreshCcw,
   Save,
+  SendHorizontal,
   Settings,
   SunMedium,
   Trash2,
@@ -16,7 +17,7 @@ import {
 } from 'lucide-react'
 import * as React from 'react'
 
-import { RegisterGamePack, StartGame, SubmitChoice } from '../../wailsjs/go/main/App'
+import { RegisterGamePack, StartGame } from '../../wailsjs/go/main/App'
 import { LogError, LogInfo } from '../../wailsjs/runtime/runtime'
 import { PlayerBriefingPanel } from '@/components/player-briefing-panel'
 import { PlaySidebar, type PlaySidebarHistoryItem, type PlaySidebarSceneMarker } from '@/components/play-sidebar'
@@ -24,6 +25,8 @@ import { PlaySettingsModal } from '@/components/play-settings-modal'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Field, FieldError, FieldGroup } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { useBgmPlayer } from '@/hooks/use-bgm-player'
 import { useNarrativeReveal } from '@/hooks/use-narrative-reveal'
 import { parsePlayerBriefing } from '@/lib/player-briefing'
@@ -61,6 +64,8 @@ function logRuntimeError(message: string) {
 }
 
 const startGameRequests = new globalThis.Map<string, Promise<roleplay.GameTurnResult>>()
+const customChoicePendingId = '__custom-choice__'
+const maxCustomChoiceRunes = 240
 
 function startGameOnce(game: roleplay.LibraryGame) {
   const existingRequest = startGameRequests.get(game.id)
@@ -97,6 +102,8 @@ export function PlayPage() {
   const bgmVolume = useGameStore((state) => state.settings.bgmVolume)
   const updateSettings = useGameStore((state) => state.updateSettings)
   const resumeSession = useGameStore((state) => state.resumeSession)
+  const submitChoiceAction = useGameStore((state) => state.submitChoice)
+  const submitCustomChoiceAction = useGameStore((state) => state.submitCustomChoice)
   const saveSnapshot = useGameStore((state) => state.saveSnapshot)
   const listSessions = useGameStore((state) => state.listSessions)
   const deleteSession = useGameStore((state) => state.deleteSession)
@@ -112,6 +119,8 @@ export function PlayPage() {
   const [isStarting, setIsStarting] = React.useState(true)
   const [isBriefingConfirmed, setIsBriefingConfirmed] = React.useState(false)
   const [pendingChoiceId, setPendingChoiceId] = React.useState<string>()
+  const [customChoiceText, setCustomChoiceText] = React.useState('')
+  const [customChoiceError, setCustomChoiceError] = React.useState<string>()
   const [activeSceneId, setActiveSceneId] = React.useState<string>()
   const [snapshotBusy, setSnapshotBusy] = React.useState(false)
   const [snapshotHint, setSnapshotHint] = React.useState<string>()
@@ -199,6 +208,15 @@ export function PlayPage() {
     }
   }, [game, playerBriefing, restartToken, resumeSession])
 
+  function applyChoiceResult(result: roleplay.GameTurnResult, chosenLabel: string) {
+    setLatestResult(result)
+    setChoiceLabels((current) => [...current, chosenLabel])
+    setTurns((currentTurns) => [...currentTurns, result.turn])
+    if (result.scene?.id) {
+      setActiveSceneId(result.scene.id)
+    }
+  }
+
   async function submitChoice(choiceId: string) {
     if (!sessionId || pendingChoiceId || latestResult?.state === 'ended') {
       return
@@ -210,19 +228,50 @@ export function PlayPage() {
 
     setPendingChoiceId(choiceId)
     setError(undefined)
+    setCustomChoiceError(undefined)
     try {
       logRuntimeInfo(`[play] submit choice session=${sessionId} choice=${choiceId}`)
-      const result = await SubmitChoice(sessionId, choiceId)
+      const result = await submitChoiceAction(sessionId, choiceId)
       logRuntimeInfo(`[play] choice result session=${sessionId} state=${result.state} tools=${result.tools?.length ?? 0} ending=${Boolean(result.ending)}`)
-      setLatestResult(result)
-      setChoiceLabels((current) => [...current, chosenLabel])
-      setTurns((currentTurns) => [...currentTurns, result.turn])
-      if (result.scene?.id) {
-        setActiveSceneId(result.scene.id)
-      }
+      applyChoiceResult(result, chosenLabel)
     }
     catch (cause) {
       logRuntimeError(`[play] submit choice failed session=${sessionId} choice=${choiceId} error=${cause instanceof Error ? cause.message : String(cause)}`)
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setPendingChoiceId(undefined)
+    }
+  }
+
+  async function submitCustomChoice(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!sessionId || pendingChoiceId || latestResult?.state === 'ended') {
+      return
+    }
+
+    const customChoice = customChoiceText.trim().replace(/\s+/g, ' ')
+    if (!customChoice) {
+      setCustomChoiceError('请输入自定义行动')
+      return
+    }
+    if (Array.from(customChoice).length > maxCustomChoiceRunes) {
+      setCustomChoiceError(`自定义行动最多 ${maxCustomChoiceRunes} 个字`)
+      return
+    }
+
+    setPendingChoiceId(customChoicePendingId)
+    setError(undefined)
+    setCustomChoiceError(undefined)
+    try {
+      logRuntimeInfo(`[play] submit custom choice session=${sessionId}`)
+      const result = await submitCustomChoiceAction(sessionId, customChoice)
+      logRuntimeInfo(`[play] custom choice result session=${sessionId} state=${result.state} tools=${result.tools?.length ?? 0} ending=${Boolean(result.ending)}`)
+      applyChoiceResult(result, customChoice)
+      setCustomChoiceText('')
+    }
+    catch (cause) {
+      logRuntimeError(`[play] submit custom choice failed session=${sessionId} error=${cause instanceof Error ? cause.message : String(cause)}`)
       setError(cause instanceof Error ? cause.message : String(cause))
     }
     finally {
@@ -432,6 +481,8 @@ export function PlayPage() {
     setChoiceLabels([])
     setError(undefined)
     setPendingChoiceId(undefined)
+    setCustomChoiceText('')
+    setCustomChoiceError(undefined)
     setActiveSceneId(game?.scenes?.[0]?.id)
     setSnapshotHint(undefined)
     setIsBriefingConfirmed(!playerBriefing)
@@ -680,6 +731,40 @@ export function PlayPage() {
                       {option.label}
                     </Button>
                   ))}
+                  <FieldGroup className="mt-2 gap-1.5">
+                    <Field data-invalid={Boolean(customChoiceError)}>
+                      <form
+                        className="flex items-center gap-2 rounded-lg border bg-card/72 p-2 shadow-lg shadow-black/25 backdrop-blur-md"
+                        onSubmit={(event) => void submitCustomChoice(event)}
+                      >
+                        <Input
+                          value={customChoiceText}
+                          maxLength={maxCustomChoiceRunes}
+                          placeholder="自己输入行动..."
+                          aria-label="自定义行动"
+                          aria-invalid={Boolean(customChoiceError)}
+                          disabled={Boolean(pendingChoiceId)}
+                          className="h-10 bg-background/55 text-base md:text-sm"
+                          onChange={(event) => {
+                            setCustomChoiceText(event.target.value)
+                            if (customChoiceError) {
+                              setCustomChoiceError(undefined)
+                            }
+                          }}
+                        />
+                        <Button
+                          type="submit"
+                          size="icon-lg"
+                          aria-label="提交自定义行动"
+                          title="提交自定义行动"
+                          disabled={Boolean(pendingChoiceId) || customChoiceText.trim().length === 0}
+                        >
+                          {pendingChoiceId === customChoicePendingId ? <Loader2 className="animate-spin" data-icon /> : <SendHorizontal data-icon />}
+                        </Button>
+                      </form>
+                      <FieldError className="px-2 text-xs">{customChoiceError}</FieldError>
+                    </Field>
+                  </FieldGroup>
                 </section>
               ) : null}
             </>

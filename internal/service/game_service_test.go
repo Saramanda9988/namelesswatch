@@ -217,6 +217,37 @@ func TestGameServiceSubmitChoiceFallsBackWhenPrefetchMissing(t *testing.T) {
 	}
 }
 
+func TestGameServiceSubmitCustomChoiceRecordsUserInput(t *testing.T) {
+	config := *appconf.DefaultConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: endedTurnResponse("自定义后果")}},
+	}
+	service, session, _ := newPrefetchTestService(t, config, factory)
+
+	result, err := service.SubmitCustomChoice(session.ID, "  敲三下门  ")
+	if err != nil {
+		t.Fatalf("submit custom choice: %v", err)
+	}
+	if got := strings.Join(result.Payload, ""); got != "自定义后果" {
+		t.Fatalf("expected custom payload, got %#v", result.Payload)
+	}
+	if factory.callCount() != 1 {
+		t.Fatalf("expected one synchronous model call, got %d", factory.callCount())
+	}
+
+	current := service.sessions[session.ID]
+	if len(current.Turns) != 3 {
+		t.Fatalf("expected ai/user/ai turns, got %#v", current.Turns)
+	}
+	userTurn := current.Turns[1]
+	if !userTurn.CustomInput || userTurn.SelectedChoiceLabel != "敲三下门" || strings.TrimSpace(userTurn.SelectedChoiceID) == "" {
+		t.Fatalf("expected custom user turn, got %#v", userTurn)
+	}
+	if !strings.HasPrefix(userTurn.SelectedChoiceID, "custom-") {
+		t.Fatalf("expected generated custom choice id, got %q", userTurn.SelectedChoiceID)
+	}
+}
+
 func TestGameServiceSubmitChoiceFallsBackWhenPrefetchTimesOut(t *testing.T) {
 	config := prefetchTestConfig()
 	config.AIChoicePrefetchWaitMS = 10

@@ -495,6 +495,43 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesMarksCustomInput(t *testing.T) {
+	pack := loadExamplePack(t)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.AppendTurn(GameTurn{
+		ID:      NewID("turn"),
+		Role:    TurnRoleAI,
+		Payload: []string{"你站在玄关。"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Options: []ChoiceOption{{ID: "check_watch", Label: "查看手表"}},
+		}},
+		CreatedAt: NowISO(),
+	})
+	session.AppendTurn(GameTurn{
+		ID:                  NewID("turn"),
+		Role:                TurnRoleUser,
+		Payload:             []string{"敲三下门"},
+		SelectedChoiceID:    "custom-test",
+		SelectedChoiceLabel: "敲三下门",
+		CustomInput:         true,
+		CreatedAt:           NowISO(),
+	})
+
+	messages := BuildMessages(pack, session, nil, "")
+	userPrompt := messages[1].Content
+	if !strings.Contains(userPrompt, "(custom_input: 敲三下门)") {
+		t.Fatalf("expected prompt to mark custom input, got:\n%s", userPrompt)
+	}
+	if strings.Contains(userPrompt, "(choice: custom-test") {
+		t.Fatalf("custom input should not be formatted as a fixed option choice, got:\n%s", userPrompt)
+	}
+}
+
 func TestBuildMessagesIncludesPlayerVisibleBriefing(t *testing.T) {
 	pack := loadExamplePack(t)
 	pack.Files[PlayerBriefingFileName] = `{"title":"你需要记住的规则","items":[{"id":"feed-dog","text":"记得给狗喂食"}]}`

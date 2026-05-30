@@ -161,6 +161,7 @@ export namespace roleplay {
 	    payload: string[];
 	    selectedChoiceId?: string;
 	    selectedChoiceLabel?: string;
+	    customInput?: boolean;
 	    tools?: ChoiceTool[];
 	    scene?: SceneChange;
 	    bgm?: BGMChange;
@@ -178,6 +179,7 @@ export namespace roleplay {
 	        this.payload = source["payload"];
 	        this.selectedChoiceId = source["selectedChoiceId"];
 	        this.selectedChoiceLabel = source["selectedChoiceLabel"];
+	        this.customInput = source["customInput"];
 	        this.tools = this.convertValues(source["tools"], ChoiceTool);
 	        this.scene = this.convertValues(source["scene"], SceneChange);
 	        this.bgm = this.convertValues(source["bgm"], BGMChange);

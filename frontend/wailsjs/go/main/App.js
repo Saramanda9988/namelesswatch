@@ -58,6 +58,10 @@ export function SubmitChoice(arg1, arg2) {
   return window['go']['main']['App']['SubmitChoice'](arg1, arg2);
 }
 
+export function SubmitCustomChoice(arg1, arg2) {
+  return window['go']['main']['App']['SubmitCustomChoice'](arg1, arg2);
+}
+
 export function UpdateAppConfig(arg1) {
   return window['go']['main']['App']['UpdateAppConfig'](arg1);
 }
