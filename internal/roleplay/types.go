@@ -324,12 +324,13 @@ func newGameSessionWithWorkspace(sessionID, gameID string, pack StoryPack, works
 	if len(pack.Scenes) > 0 {
 		currentSceneID = pack.Scenes[0].ID
 	}
+	currentBGMID := pack.BGMSceneDefaults[currentSceneID]
 	return &GameSession{
 		ID:             sessionID,
 		GameID:         gameID,
 		State:          SessionStatePlaying,
 		CurrentSceneID: currentSceneID,
-		CurrentBGMID:   "",
+		CurrentBGMID:   currentBGMID,
 		WorkspacePath:  workspace,
 		MemoryPath:     filepath.Join(workspace, "memory.md"),
 		Turns:          []GameTurn{},

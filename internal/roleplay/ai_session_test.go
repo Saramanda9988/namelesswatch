@@ -240,6 +240,35 @@ func TestNewGameSessionInDirUsesGameAndSessionPath(t *testing.T) {
 	}
 }
 
+func TestNewGameSessionUsesInitialSceneDefaultBGM(t *testing.T) {
+	pack := loadExamplePack(t)
+	pack.Scenes = []SceneAsset{{ID: "entrance", Name: "玄关"}}
+	pack.BGMs = []BGMAsset{{ID: "daily", Name: "平常氛围", FileName: "daily.mp3", URL: "/local/story-assets/game/bgm/daily.mp3"}}
+	pack.BGMSceneDefaults = map[string]string{"entrance": "daily"}
+
+	session, err := NewGameSessionInDir("demo-game", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new game session in dir: %v", err)
+	}
+	if session.CurrentBGMID != "daily" {
+		t.Fatalf("expected initial scene default BGM, got %q", session.CurrentBGMID)
+	}
+
+	result := appendAITurn(session, AITurnResponse{
+		Type:    "game_turn",
+		State:   "continue",
+		Payload: []string{"你站在玄关。"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Options: []ChoiceOption{{ID: "check_watch", Label: "查看手表"}},
+		}},
+	})
+	if result.CurrentBGMID != "daily" {
+		t.Fatalf("expected result to carry initial scene default BGM, got %q", result.CurrentBGMID)
+	}
+}
+
 func TestNewGameSessionInitializesContextSummary(t *testing.T) {
 	pack := loadExamplePack(t)
 	session, err := NewGameSessionInDir("demo-game", pack, t.TempDir())
@@ -493,6 +522,12 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	if !strings.Contains(userPrompt, updatedRule) {
 		t.Fatal("expected prompt to include fresh rule.md from session workspace")
 	}
+	if count := strings.Count(userPrompt, updatedRule); count != 1 {
+		t.Fatalf("expected latest rule.md to be injected once, got %d occurrences in:\n%s", count, userPrompt)
+	}
+	if !strings.Contains(systemPrompt, "玩家可见文本") || !strings.Contains(systemPrompt, "不要使用“规则里说”") {
+		t.Fatal("expected system prompt to prevent rule metadata from leaking into visible text")
+	}
 }
 
 func TestBuildMessagesMarksCustomInput(t *testing.T) {
@@ -529,6 +564,29 @@ func TestBuildMessagesMarksCustomInput(t *testing.T) {
 	}
 	if strings.Contains(userPrompt, "(choice: custom-test") {
 		t.Fatalf("custom input should not be formatted as a fixed option choice, got:\n%s", userPrompt)
+	}
+}
+
+func TestValidateGameTurnRejectsInternalMetaText(t *testing.T) {
+	turn := AITurnResponse{
+		Type:    "game_turn",
+		State:   "continue",
+		Payload: []string{"你想起规则里说过，不对劲时应该求助。"},
+		Tools: []ChoiceTool{{
+			Type:    "choice",
+			ID:      "main",
+			Prompt:  "怎么做？",
+			Options: []ChoiceOption{{ID: "ask", Label: "去找邻居"}},
+		}},
+	}
+	if err := ValidateGameTurn(turn); err == nil || !strings.Contains(err.Error(), "internal story metadata") {
+		t.Fatalf("expected payload metadata leak to be rejected, got %v", err)
+	}
+
+	turn.Payload = []string{"你坐在沙发上，冰箱仍在低低地响。"}
+	turn.Tools[0].Options[0].Label = "触发坏结局1"
+	if err := ValidateGameTurn(turn); err == nil || !strings.Contains(err.Error(), "internal story metadata") {
+		t.Fatalf("expected choice label metadata leak to be rejected, got %v", err)
 	}
 }
 
