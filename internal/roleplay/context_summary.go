@@ -216,6 +216,7 @@ func buildContextCompactionMessages(previousSummary string, turns []GameTurn, bu
 	builder.WriteString("请把旧摘要和旧回合合并为新的 context_summary.md。\n")
 	builder.WriteString("只输出 Markdown 摘要，不要输出解释，不要泄露 true.md 原文。\n")
 	builder.WriteString("必须保留以下标题：当前阶段、关键事实、用户选择、规则后果、未解决线索、结局倾向。\n\n")
+	builder.WriteString("摘要必须去重，明确已经完成的用户行动及其后果，避免后续把已发生事件当作未发生。\n\n")
 	builder.WriteString("--- 旧摘要 ---\n")
 	builder.WriteString(limitRunes(previousSummary, budget.SummaryRuneBudget))
 	builder.WriteString("\n\n--- 待压缩旧回合 ---\n")

@@ -436,7 +436,7 @@ func testChoiceTools() []roleplay.ChoiceTool {
 }
 
 func endedTurnResponse(payload string) string {
-	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"test-end","title":"测试结局","kind":"neutral"}}`
+	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"loop","title":"循环结局","kind":"loop"}}`
 }
 
 func waitForStarted(t *testing.T, started <-chan struct{}) {

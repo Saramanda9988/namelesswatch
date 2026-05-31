@@ -519,6 +519,21 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	if !strings.Contains(userPrompt, "Mandatory Rule Review After User Choice") {
 		t.Fatal("expected user prompt to include mandatory rule review section")
 	}
+	if !strings.Contains(userPrompt, "Latest User Action To Resolve") ||
+		!strings.Contains(userPrompt, "selected_choice_id: check_watch") ||
+		!strings.Contains(userPrompt, "本回合必须承接这一个用户行动") ||
+		!strings.Contains(userPrompt, "不能用你补完的后续行动触发") {
+		t.Fatalf("expected prompt to anchor latest user action, got:\n%s", userPrompt)
+	}
+	if !strings.Contains(systemPrompt, "每个 game_turn 只能推进到下一个需要玩家决定的节点") {
+		t.Fatal("expected system prompt to prevent autonomous follow-up actions")
+	}
+	if !strings.Contains(userPrompt, "Available Endings") || !strings.Contains(userPrompt, "好结局1 (kind: good)") {
+		t.Fatalf("expected prompt to include endings catalog, got:\n%s", userPrompt)
+	}
+	if !strings.Contains(systemPrompt, "ending.title 必须完全使用 Available Endings 中的某个结局名") {
+		t.Fatal("expected system prompt to require ending title from endings.md")
+	}
 	if !strings.Contains(userPrompt, updatedRule) {
 		t.Fatal("expected prompt to include fresh rule.md from session workspace")
 	}
@@ -587,6 +602,30 @@ func TestValidateGameTurnRejectsInternalMetaText(t *testing.T) {
 	turn.Tools[0].Options[0].Label = "触发坏结局1"
 	if err := ValidateGameTurn(turn); err == nil || !strings.Contains(err.Error(), "internal story metadata") {
 		t.Fatalf("expected choice label metadata leak to be rejected, got %v", err)
+	}
+}
+
+func TestValidateGameTurnForSessionRequiresKnownEndingTitle(t *testing.T) {
+	pack := loadExamplePack(t)
+	response := AITurnResponse{
+		Type:    "game_turn",
+		State:   "ended",
+		Payload: []string{"你安全地度过了这一晚。"},
+		Tools:   []ChoiceTool{},
+		Ending:  &Ending{ID: "safe", Title: "安全过夜", Kind: "good"},
+	}
+	if err := ValidateGameTurnForSession(response, nil, pack); err == nil || !strings.Contains(err.Error(), "must match a heading in endings.md") {
+		t.Fatalf("expected unknown ending title to be rejected, got %v", err)
+	}
+
+	response.Ending = &Ending{ID: "good-1", Title: "好结局1", Kind: "good"}
+	if err := ValidateGameTurnForSession(response, nil, pack); err != nil {
+		t.Fatalf("expected ending title from endings.md to be accepted, got %v", err)
+	}
+
+	response.Ending = &Ending{ID: "good-1", Title: "好结局1", Kind: "loop"}
+	if err := ValidateGameTurnForSession(response, nil, pack); err == nil || !strings.Contains(err.Error(), "must be \"good\"") {
+		t.Fatalf("expected ending kind mismatch to be rejected, got %v", err)
 	}
 }
 
