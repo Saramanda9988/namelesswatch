@@ -26,14 +26,22 @@ var RequiredStoryFiles = []string{"scene.md", "rule.md", "true.md", "memory.md",
 
 const MetadataFileName = "metadata.json"
 const PlayerBriefingFileName = "briefing.json"
+const AchievementsFileName = "achievements.json"
+
+const (
+	AchievementTypeAITriggered = "ai_triggered"
+	AchievementTypeRuleBased   = "rule_based"
+	AchievementRuleOneLife     = "one_life_completion"
+)
 
 type StoryPack struct {
-	ID               string            `json:"id"`
-	Files            map[string]string `json:"files"`
-	Scenes           []SceneAsset      `json:"scenes,omitempty"`
-	BGMs             []BGMAsset        `json:"bgms,omitempty"`
-	BGMSceneDefaults map[string]string `json:"bgmSceneDefaults,omitempty"`
-	MapURLs          []string          `json:"mapUrls,omitempty"`
+	ID               string                  `json:"id"`
+	Files            map[string]string       `json:"files"`
+	Scenes           []SceneAsset            `json:"scenes,omitempty"`
+	BGMs             []BGMAsset              `json:"bgms,omitempty"`
+	BGMSceneDefaults map[string]string       `json:"bgmSceneDefaults,omitempty"`
+	MapURLs          []string                `json:"mapUrls,omitempty"`
+	Achievements     []AchievementDefinition `json:"achievements,omitempty"`
 }
 
 type GameMetadata struct {
@@ -51,14 +59,15 @@ func (m GameMetadata) GameTitle() string {
 }
 
 type LibraryGame struct {
-	ID         string            `json:"id"`
-	Title      string            `json:"title"`
-	ImportedAt string            `json:"importedAt"`
-	Files      map[string]string `json:"files"`
-	PhotoURLs  []string          `json:"photoUrls"`
-	MapURLs    []string          `json:"mapUrls"`
-	Scenes     []SceneAsset      `json:"scenes,omitempty"`
-	BGMs       []BGMAsset        `json:"bgms,omitempty"`
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	ImportedAt   string                  `json:"importedAt"`
+	Files        map[string]string       `json:"files"`
+	PhotoURLs    []string                `json:"photoUrls"`
+	MapURLs      []string                `json:"mapUrls"`
+	Scenes       []SceneAsset            `json:"scenes,omitempty"`
+	BGMs         []BGMAsset              `json:"bgms,omitempty"`
+	Achievements []AchievementDefinition `json:"achievements,omitempty"`
 }
 
 type ImportGameResult struct {
@@ -85,30 +94,32 @@ type GameSession struct {
 }
 
 type GameTurn struct {
-	ID                  string       `json:"id"`
-	Role                string       `json:"role"`
-	Payload             []string     `json:"payload"`
-	SelectedChoiceID    string       `json:"selectedChoiceId,omitempty"`
-	SelectedChoiceLabel string       `json:"selectedChoiceLabel,omitempty"`
-	CustomInput         bool         `json:"customInput,omitempty"`
-	Tools               []ChoiceTool `json:"tools,omitempty"`
-	Scene               *SceneChange `json:"scene,omitempty"`
-	BGM                 *BGMChange   `json:"bgm,omitempty"`
-	Ending              *Ending      `json:"ending,omitempty"`
-	CreatedAt           string       `json:"createdAt"`
+	ID                  string                `json:"id"`
+	Role                string                `json:"role"`
+	Payload             []string              `json:"payload"`
+	SelectedChoiceID    string                `json:"selectedChoiceId,omitempty"`
+	SelectedChoiceLabel string                `json:"selectedChoiceLabel,omitempty"`
+	CustomInput         bool                  `json:"customInput,omitempty"`
+	Tools               []ChoiceTool          `json:"tools,omitempty"`
+	Scene               *SceneChange          `json:"scene,omitempty"`
+	BGM                 *BGMChange            `json:"bgm,omitempty"`
+	Ending              *Ending               `json:"ending,omitempty"`
+	Achievement         *AchievementReference `json:"achievement,omitempty"`
+	CreatedAt           string                `json:"createdAt"`
 }
 
 type GameTurnResult struct {
-	SessionID    string       `json:"sessionId"`
-	GameID       string       `json:"gameId"`
-	State        string       `json:"state"`
-	Payload      []string     `json:"payload"`
-	Tools        []ChoiceTool `json:"tools"`
-	Scene        *SceneChange `json:"scene,omitempty"`
-	BGM          *BGMChange   `json:"bgm,omitempty"`
-	CurrentBGMID string       `json:"currentBgmId,omitempty"`
-	Ending       *Ending      `json:"ending,omitempty"`
-	Turn         GameTurn     `json:"turn"`
+	SessionID    string                   `json:"sessionId"`
+	GameID       string                   `json:"gameId"`
+	State        string                   `json:"state"`
+	Payload      []string                 `json:"payload"`
+	Tools        []ChoiceTool             `json:"tools"`
+	Scene        *SceneChange             `json:"scene,omitempty"`
+	BGM          *BGMChange               `json:"bgm,omitempty"`
+	CurrentBGMID string                   `json:"currentBgmId,omitempty"`
+	Ending       *Ending                  `json:"ending,omitempty"`
+	Achievement  *AchievementUnlockResult `json:"achievement,omitempty"`
+	Turn         GameTurn                 `json:"turn"`
 }
 
 type ChoiceTool struct {
@@ -157,6 +168,47 @@ type Ending struct {
 	Kind  string `json:"kind"`
 }
 
+type AchievementDefinition struct {
+	ID                  string           `json:"id"`
+	Title               string           `json:"title"`
+	Type                string           `json:"type,omitempty"`
+	Trigger             string           `json:"trigger,omitempty"`
+	RequiresCustomInput bool             `json:"requiresCustomInput,omitempty"`
+	Ending              Ending           `json:"ending"`
+	Rule                *AchievementRule `json:"rule,omitempty"`
+}
+
+type AchievementRule struct {
+	Kind               string `json:"kind"`
+	EndingID           string `json:"endingId,omitempty"`
+	EndingKind         string `json:"endingKind,omitempty"`
+	ForbidSnapshotFork bool   `json:"forbidSnapshotFork,omitempty"`
+}
+
+type AchievementReference struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+type AchievementUnlock struct {
+	GameID        string `json:"gameId"`
+	AchievementID string `json:"achievementId"`
+	Title         string `json:"title"`
+	SessionID     string `json:"sessionId"`
+	EndingID      string `json:"endingId,omitempty"`
+	UnlockedAt    string `json:"unlockedAt"`
+}
+
+type AchievementUnlockResult struct {
+	GameID        string `json:"gameId"`
+	AchievementID string `json:"achievementId"`
+	Title         string `json:"title"`
+	SessionID     string `json:"sessionId"`
+	EndingID      string `json:"endingId,omitempty"`
+	UnlockedAt    string `json:"unlockedAt,omitempty"`
+	New           bool   `json:"new"`
+}
+
 type AgentTerminalRequest struct {
 	Type     string            `json:"type"`
 	Reason   string            `json:"reason"`
@@ -196,6 +248,10 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 	}
 
 	bgms := parseBGMAssets(normalized)
+	achievements, err := parseAchievementDefinitions(normalized)
+	if err != nil {
+		return StoryPack{}, err
+	}
 	return StoryPack{
 		ID:               gameID,
 		Files:            normalized,
@@ -203,14 +259,16 @@ func NewStoryPack(gameID string, files map[string]string) (StoryPack, error) {
 		BGMs:             bgms,
 		BGMSceneDefaults: parseBGMSceneDefaults(normalized, bgms),
 		MapURLs:          parseMapURLs(normalized),
+		Achievements:     achievements,
 	}, nil
 }
 
 func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, error) {
 	normalized := normalizeFileContents(files)
-	validFiles := make([]string, 0, len(RequiredStoryFiles)+2)
+	validFiles := make([]string, 0, len(RequiredStoryFiles)+3)
 	storyFileNames := append([]string{MetadataFileName}, RequiredStoryFiles...)
 	storyFileNames = append(storyFileNames, PlayerBriefingFileName)
+	storyFileNames = append(storyFileNames, AchievementsFileName)
 	for _, fileName := range storyFileNames {
 		if _, ok := normalized[strings.ToLower(fileName)]; ok {
 			validFiles = append(validFiles, fileName)
@@ -247,14 +305,24 @@ func NewLibraryGame(files map[string]string) (LibraryGame, ImportGameResult, err
 		}, nil
 	}
 
+	achievements, err := parseAchievementDefinitions(normalized)
+	if err != nil {
+		return LibraryGame{}, ImportGameResult{
+			Missing:    []string{},
+			Warnings:   []string{"achievements.json 解析失败"},
+			ValidFiles: validFiles,
+		}, err
+	}
+
 	game := LibraryGame{
-		ID:         NewID("game"),
-		Title:      title,
-		ImportedAt: NowISO(),
-		Files:      normalized,
-		Scenes:     orderScenesWithInitial(parseSceneAssets(normalized), metadata.InitialScene),
-		BGMs:       parseBGMAssets(normalized),
-		MapURLs:    parseMapURLs(normalized),
+		ID:           NewID("game"),
+		Title:        title,
+		ImportedAt:   NowISO(),
+		Files:        normalized,
+		Scenes:       orderScenesWithInitial(parseSceneAssets(normalized), metadata.InitialScene),
+		BGMs:         parseBGMAssets(normalized),
+		MapURLs:      parseMapURLs(normalized),
+		Achievements: achievements,
 	}
 	for _, scene := range game.Scenes {
 		game.PhotoURLs = append(game.PhotoURLs, scene.URL)
@@ -377,6 +445,18 @@ func (s *GameSession) LatestAITurn() (GameTurn, bool) {
 	return GameTurn{}, false
 }
 
+func (s *GameSession) LatestUserTurn() (GameTurn, bool) {
+	if s == nil {
+		return GameTurn{}, false
+	}
+	for i := len(s.Turns) - 1; i >= 0; i-- {
+		if s.Turns[i].Role == TurnRoleUser {
+			return s.Turns[i], true
+		}
+	}
+	return GameTurn{}, false
+}
+
 func (s *GameSession) Clone() GameSession {
 	turns := slices.Clone(s.Turns)
 	return GameSession{
@@ -415,8 +495,52 @@ func ResultFromSession(session *GameSession) GameTurnResult {
 		BGM:          last.BGM,
 		CurrentBGMID: session.CurrentBGMID,
 		Ending:       last.Ending,
+		Achievement:  AchievementResultFromReference(session.GameID, session.ID, last.Ending, last.Achievement),
 		Turn:         last,
 	}
+}
+
+func AchievementResultFromReference(gameID, sessionID string, ending *Ending, achievement *AchievementReference) *AchievementUnlockResult {
+	if achievement == nil {
+		return nil
+	}
+	endingID := ""
+	if ending != nil {
+		endingID = ending.ID
+	}
+	return &AchievementUnlockResult{
+		GameID:        gameID,
+		AchievementID: achievement.ID,
+		Title:         achievement.Title,
+		SessionID:     sessionID,
+		EndingID:      endingID,
+		New:           false,
+	}
+}
+
+func AchievementResultFromUnlock(unlock AchievementUnlock, newlyUnlocked bool) AchievementUnlockResult {
+	return AchievementUnlockResult{
+		GameID:        unlock.GameID,
+		AchievementID: unlock.AchievementID,
+		Title:         unlock.Title,
+		SessionID:     unlock.SessionID,
+		EndingID:      unlock.EndingID,
+		UnlockedAt:    unlock.UnlockedAt,
+		New:           newlyUnlocked,
+	}
+}
+
+func FindAchievementDefinition(achievements []AchievementDefinition, achievementID string) (AchievementDefinition, bool) {
+	achievementID = strings.TrimSpace(achievementID)
+	if achievementID == "" {
+		return AchievementDefinition{}, false
+	}
+	for _, achievement := range achievements {
+		if achievement.ID == achievementID {
+			return achievement, true
+		}
+	}
+	return AchievementDefinition{}, false
 }
 
 func NewID(prefix string) string {
@@ -627,6 +751,143 @@ func parseMapURLs(files map[string]string) []string {
 		}
 	}
 	return nil
+}
+
+func parseAchievementDefinitions(files map[string]string) ([]AchievementDefinition, error) {
+	raw := strings.TrimSpace(files[normalizeRelativePath(AchievementsFileName)])
+	if raw == "" {
+		return nil, nil
+	}
+
+	var definitions []AchievementDefinition
+	if err := json.Unmarshal([]byte(raw), &definitions); err != nil {
+		var envelope struct {
+			Achievements []AchievementDefinition `json:"achievements"`
+		}
+		if envelopeErr := json.Unmarshal([]byte(raw), &envelope); envelopeErr != nil {
+			return nil, fmt.Errorf("parse %s: %w", AchievementsFileName, err)
+		}
+		definitions = envelope.Achievements
+	}
+	return normalizeAchievementDefinitions(definitions)
+}
+
+func normalizeAchievementDefinitions(definitions []AchievementDefinition) ([]AchievementDefinition, error) {
+	if len(definitions) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]bool, len(definitions))
+	normalized := make([]AchievementDefinition, 0, len(definitions))
+	for index, definition := range definitions {
+		definition.ID = strings.TrimSpace(definition.ID)
+		definition.Title = strings.TrimSpace(definition.Title)
+		definition.Type = strings.TrimSpace(definition.Type)
+		definition.Trigger = strings.TrimSpace(definition.Trigger)
+		definition.Ending = normalizeEnding(definition.Ending)
+		if definition.Rule != nil {
+			rule := normalizeAchievementRule(*definition.Rule)
+			definition.Rule = &rule
+		}
+
+		if definition.ID == "" {
+			return nil, fmt.Errorf("achievement %d id is required", index+1)
+		}
+		if definition.Title == "" {
+			return nil, fmt.Errorf("achievement %q title is required", definition.ID)
+		}
+		if seen[definition.ID] {
+			return nil, fmt.Errorf("achievement %q is duplicated", definition.ID)
+		}
+		seen[definition.ID] = true
+
+		if definition.Type == "" {
+			if definition.Rule != nil {
+				definition.Type = AchievementTypeRuleBased
+			} else {
+				definition.Type = AchievementTypeAITriggered
+			}
+		}
+		if err := validateAchievementDefinition(definition); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, definition)
+	}
+	return normalized, nil
+}
+
+func validateAchievementDefinition(definition AchievementDefinition) error {
+	if err := validateAchievementEnding(definition.Ending); err != nil {
+		return fmt.Errorf("achievement %q ending is invalid: %w", definition.ID, err)
+	}
+
+	switch definition.Type {
+	case AchievementTypeAITriggered:
+		if strings.TrimSpace(definition.Trigger) == "" {
+			return fmt.Errorf("achievement %q trigger is required", definition.ID)
+		}
+	case AchievementTypeRuleBased:
+		if definition.Rule == nil {
+			return fmt.Errorf("achievement %q rule is required", definition.ID)
+		}
+		if err := validateAchievementRule(*definition.Rule); err != nil {
+			return fmt.Errorf("achievement %q rule is invalid: %w", definition.ID, err)
+		}
+	default:
+		return fmt.Errorf("achievement %q type %q is unsupported", definition.ID, definition.Type)
+	}
+	return nil
+}
+
+func normalizeEnding(ending Ending) Ending {
+	ending.ID = strings.TrimSpace(ending.ID)
+	ending.Title = strings.TrimSpace(ending.Title)
+	ending.Kind = strings.TrimSpace(ending.Kind)
+	return ending
+}
+
+func validateAchievementEnding(ending Ending) error {
+	if ending.ID == "" {
+		return errors.New("id is required")
+	}
+	if ending.Title == "" {
+		return errors.New("title is required")
+	}
+	if !isValidEndingKind(ending.Kind) {
+		return fmt.Errorf("kind %q is unsupported", ending.Kind)
+	}
+	return nil
+}
+
+func normalizeAchievementRule(rule AchievementRule) AchievementRule {
+	rule.Kind = strings.TrimSpace(rule.Kind)
+	rule.EndingID = strings.TrimSpace(rule.EndingID)
+	rule.EndingKind = strings.TrimSpace(rule.EndingKind)
+	return rule
+}
+
+func validateAchievementRule(rule AchievementRule) error {
+	switch rule.Kind {
+	case AchievementRuleOneLife:
+		if rule.EndingID == "" && rule.EndingKind == "" {
+			return errors.New("endingId or endingKind is required")
+		}
+		if rule.EndingKind != "" && !isValidEndingKind(rule.EndingKind) {
+			return fmt.Errorf("endingKind %q is unsupported", rule.EndingKind)
+		}
+	default:
+		return fmt.Errorf("kind %q is unsupported", rule.Kind)
+	}
+	return nil
+}
+
+func isValidEndingKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "good", "bad", "loop", "neutral":
+		return true
+	default:
+		return false
+	}
 }
 
 // loadGameMetadata decodes metadata.json from the (normalized) pack files. It returns a

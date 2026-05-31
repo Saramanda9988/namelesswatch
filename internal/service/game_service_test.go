@@ -75,6 +75,37 @@ func TestGameServiceCRUDPersistsJSON(t *testing.T) {
 	}
 }
 
+func TestGameServiceDeleteGameDeletesAchievementUnlocks(t *testing.T) {
+	setTestUserConfigDir(t)
+	service := NewGameService(nil)
+	service.repo = &gameRepository{path: filepath.Join(t.TempDir(), "library.json")}
+	service.achievementRepo = &achievementRepository{path: filepath.Join(t.TempDir(), "achievements.json")}
+
+	created, err := service.CreateGame(testLibraryGame(t, ""))
+	if err != nil {
+		t.Fatalf("create game: %v", err)
+	}
+	if _, _, err := service.achievementRepo.upsert(roleplay.AchievementUnlock{
+		GameID:        created.ID,
+		AchievementID: "watch_revenge",
+		Title:         "手表的复仇",
+		SessionID:     "session-a",
+	}); err != nil {
+		t.Fatalf("upsert achievement: %v", err)
+	}
+
+	if err := service.DeleteGame(created.ID); err != nil {
+		t.Fatalf("delete game: %v", err)
+	}
+	unlocks, err := service.achievementRepo.list(created.ID)
+	if err != nil {
+		t.Fatalf("list achievements: %v", err)
+	}
+	if len(unlocks) != 0 {
+		t.Fatalf("expected deleted game achievements to be removed, got %#v", unlocks)
+	}
+}
+
 func TestNormalizeAndMaterializeLibraryGameBGMAssets(t *testing.T) {
 	setTestUserConfigDir(t)
 
@@ -245,6 +276,115 @@ func TestGameServiceSubmitCustomChoiceRecordsUserInput(t *testing.T) {
 	}
 	if !strings.HasPrefix(userTurn.SelectedChoiceID, "custom-") {
 		t.Fatalf("expected generated custom choice id, got %q", userTurn.SelectedChoiceID)
+	}
+}
+
+func TestGameServiceSubmitCustomChoiceRecordsAchievementUnlock(t *testing.T) {
+	config := *appconf.DefaultConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: achievementEndedResponse("手表从黑暗里回来了。", "watch_revenge", "手表的复仇", "bad")}},
+	}
+	service, session, _, repo := newAchievementTestService(t, config, factory, customInputAchievementJSON, "")
+
+	result, err := service.SubmitCustomChoice(session.ID, "我把手表扔出窗外")
+	if err != nil {
+		t.Fatalf("submit custom choice: %v", err)
+	}
+	if result.Achievement == nil || result.Achievement.AchievementID != "watch_revenge" || !result.Achievement.New {
+		t.Fatalf("expected new achievement unlock, got %#v", result.Achievement)
+	}
+	if result.Achievement.UnlockedAt == "" {
+		t.Fatalf("expected unlock time, got %#v", result.Achievement)
+	}
+
+	unlocks, err := repo.list(session.GameID)
+	if err != nil {
+		t.Fatalf("list achievements: %v", err)
+	}
+	if len(unlocks) != 1 || unlocks[0].AchievementID != "watch_revenge" || unlocks[0].SessionID != session.ID {
+		t.Fatalf("expected persisted unlock, got %#v", unlocks)
+	}
+	latest, ok := service.sessions[session.ID].LatestAITurn()
+	if !ok || latest.Achievement == nil || latest.Achievement.ID != "watch_revenge" {
+		t.Fatalf("expected session turn achievement, got %#v", latest)
+	}
+}
+
+func TestGameServicePrefetchHitRecordsAchievementUnlock(t *testing.T) {
+	config := prefetchTestConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: achievementEndedResponse("你和朋友一起被困进循环。", "two_friends", "两个好朋友", "loop")}},
+	}
+	service, session, pack, repo := newAchievementTestService(t, config, factory, choiceAchievementJSON, "")
+	baseTurn := session.Turns[len(session.Turns)-1]
+
+	service.maybeStartChoicePrefetch(session.Clone(), pack, config, roleplay.ResultFromSession(session))
+	result, err := service.SubmitChoice(session.ID, baseTurn.Tools[0].Options[0].ID)
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if result.Achievement == nil || result.Achievement.AchievementID != "two_friends" || !result.Achievement.New {
+		t.Fatalf("expected prefetch achievement unlock, got %#v", result.Achievement)
+	}
+	if factory.callCount() != 1 {
+		t.Fatalf("expected only prefetch model call, got %d", factory.callCount())
+	}
+	unlocks, err := repo.list(session.GameID)
+	if err != nil {
+		t.Fatalf("list achievements: %v", err)
+	}
+	if len(unlocks) != 1 || unlocks[0].AchievementID != "two_friends" {
+		t.Fatalf("expected persisted prefetch unlock, got %#v", unlocks)
+	}
+}
+
+func TestGameServiceRuleBasedOneLifeUnlock(t *testing.T) {
+	config := *appconf.DefaultConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: goodEndingResponse("你在朋友家安全熬到了天亮。")}},
+	}
+	service, session, _, repo := newAchievementTestService(t, config, factory, oneLifeAchievementJSON, "")
+
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if result.Achievement == nil || result.Achievement.AchievementID != "one_life_clear" || !result.Achievement.New {
+		t.Fatalf("expected one-life achievement unlock, got %#v", result.Achievement)
+	}
+	latest, ok := service.sessions[session.ID].LatestAITurn()
+	if !ok || latest.Achievement == nil || latest.Achievement.ID != "one_life_clear" {
+		t.Fatalf("expected rule achievement on latest turn, got %#v", latest)
+	}
+	unlocks, err := repo.list(session.GameID)
+	if err != nil {
+		t.Fatalf("list achievements: %v", err)
+	}
+	if len(unlocks) != 1 || unlocks[0].AchievementID != "one_life_clear" {
+		t.Fatalf("expected persisted one-life unlock, got %#v", unlocks)
+	}
+}
+
+func TestGameServiceRuleBasedOneLifeSkipsSnapshotFork(t *testing.T) {
+	config := *appconf.DefaultConfig()
+	factory := &scriptedChatFactory{
+		clients: []*scriptedChatClient{{response: goodEndingResponse("你在朋友家安全熬到了天亮。")}},
+	}
+	service, session, _, repo := newAchievementTestService(t, config, factory, oneLifeAchievementJSON, "snapshot-session")
+
+	result, err := service.SubmitChoice(session.ID, "left")
+	if err != nil {
+		t.Fatalf("submit choice: %v", err)
+	}
+	if result.Achievement != nil {
+		t.Fatalf("snapshot fork should not unlock one-life achievement, got %#v", result.Achievement)
+	}
+	unlocks, err := repo.list(session.GameID)
+	if err != nil {
+		t.Fatalf("list achievements: %v", err)
+	}
+	if len(unlocks) != 0 {
+		t.Fatalf("expected no persisted unlocks, got %#v", unlocks)
 	}
 }
 
@@ -425,6 +565,38 @@ func newPrefetchTestService(t *testing.T, config appconf.AppConfig, factory *scr
 	return service, session, pack
 }
 
+func newAchievementTestService(t *testing.T, config appconf.AppConfig, factory *scriptedChatFactory, achievements string, parentID string) (*GameService, *roleplay.GameSession, roleplay.StoryPack, *achievementRepository) {
+	t.Helper()
+
+	files := testGameFiles(t)
+	files[roleplay.AchievementsFileName] = achievements
+	pack, err := roleplay.NewStoryPack("game-a", files)
+	if err != nil {
+		t.Fatalf("new story pack: %v", err)
+	}
+	session, err := roleplay.NewGameSessionInDir("game-a", pack, t.TempDir())
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Label = "主线"
+	session.ParentID = parentID
+	session.AppendTurn(roleplay.GameTurn{
+		ID:        "turn-base",
+		Role:      roleplay.TurnRoleAI,
+		Payload:   []string{"你站在门前。"},
+		Tools:     testChoiceTools(),
+		CreatedAt: roleplay.NowISO(),
+	})
+
+	repo := &achievementRepository{path: filepath.Join(t.TempDir(), "achievements.json")}
+	service := NewGameService(&config)
+	service.packs[pack.ID] = pack
+	service.sessions[session.ID] = session
+	service.achievementRepo = repo
+	service.newChatClient = factory.factory
+	return service, session, pack, repo
+}
+
 func testChoiceTools() []roleplay.ChoiceTool {
 	return []roleplay.ChoiceTool{{
 		Type: "choice",
@@ -438,6 +610,45 @@ func testChoiceTools() []roleplay.ChoiceTool {
 func endedTurnResponse(payload string) string {
 	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"loop","title":"循环结局","kind":"loop"}}`
 }
+
+func achievementEndedResponse(payload string, achievementID string, title string, kind string) string {
+	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"` + achievementID + `","title":"` + title + `","kind":"` + kind + `"},"achievement":{"id":"` + achievementID + `","title":"` + title + `"}}`
+}
+
+func goodEndingResponse(payload string) string {
+	return `{"type":"game_turn","state":"ended","payload":["` + payload + `"],"tools":[],"ending":{"id":"good-1","title":"好结局1","kind":"good"}}`
+}
+
+const customInputAchievementJSON = `[
+  {
+    "id": "watch_revenge",
+    "title": "手表的复仇",
+    "type": "ai_triggered",
+    "trigger": "玩家明确把手表丢弃或扔掉。",
+    "requiresCustomInput": true,
+    "ending": {"id":"watch_revenge","title":"手表的复仇","kind":"bad"}
+  }
+]`
+
+const choiceAchievementJSON = `[
+  {
+    "id": "two_friends",
+    "title": "两个好朋友",
+    "type": "ai_triggered",
+    "trigger": "玩家把朋友拉到自己家并让双方都进入循环。",
+    "ending": {"id":"two_friends","title":"两个好朋友","kind":"loop"}
+  }
+]`
+
+const oneLifeAchievementJSON = `[
+  {
+    "id": "one_life_clear",
+    "title": "殿堂级理解",
+    "type": "rule_based",
+    "ending": {"id":"hall_of_fame","title":"殿堂级理解","kind":"good"},
+    "rule": {"kind":"one_life_completion","endingKind":"good","forbidSnapshotFork":true}
+  }
+]`
 
 func waitForStarted(t *testing.T, started <-chan struct{}) {
 	t.Helper()

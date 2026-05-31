@@ -1,0 +1,66 @@
+{
+  "achievements": [
+    {
+      "id": "eldritch_life",
+      "title": "活成了类似邪神的存在",
+      "type": "ai_triggered",
+      "trigger": "玩家明确表示仍然带着手表，不去朋友家、不睡觉、不处理其他目标，只在黑暗中长时间停留，并主动接受黑暗与循环的影响。",
+      "requiresCustomInput": true,
+      "ending": {
+        "id": "eldritch_life",
+        "title": "活成了类似邪神的存在",
+        "kind": "neutral"
+      }
+    },
+    {
+      "id": "watch_revenge",
+      "title": "手表的复仇",
+      "type": "ai_triggered",
+      "trigger": "玩家明确把手表丢弃、扔掉、砸掉或试图摆脱手表，且当前状态没有其他更高优先级规则阻止手表回到玩家身边。",
+      "requiresCustomInput": true,
+      "ending": {
+        "id": "watch_revenge",
+        "title": "手表的复仇",
+        "kind": "bad"
+      }
+    },
+    {
+      "id": "two_friends",
+      "title": "两个好朋友",
+      "type": "ai_triggered",
+      "trigger": "玩家明确不去朋友家睡觉，反而邀请或拉着朋友来到自己家，使朋友也被卷入同一个循环。",
+      "requiresCustomInput": true,
+      "ending": {
+        "id": "two_friends",
+        "title": "两个好朋友",
+        "kind": "loop"
+      }
+    },
+    {
+      "id": "epic_dodge",
+      "title": "史诗级躲避",
+      "type": "ai_triggered",
+      "trigger": "另一个时空的人通过小狗留下的线索或行动救下玩家，使玩家避开原本会命中的致命结局。",
+      "ending": {
+        "id": "epic_dodge",
+        "title": "史诗级躲避",
+        "kind": "good"
+      }
+    },
+    {
+      "id": "one_life_clear",
+      "title": "殿堂级理解",
+      "type": "rule_based",
+      "ending": {
+        "id": "hall_of_fame",
+        "title": "殿堂级理解",
+        "kind": "good"
+      },
+      "rule": {
+        "kind": "one_life_completion",
+        "endingKind": "good",
+        "forbidSnapshotFork": true
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import {
   SendHorizontal,
   Settings,
   SunMedium,
+  Trophy,
   Trash2,
   Volume2,
   VolumeX,
@@ -106,6 +107,7 @@ export function PlayPage() {
   const submitCustomChoiceAction = useGameStore((state) => state.submitCustomChoice)
   const saveSnapshot = useGameStore((state) => state.saveSnapshot)
   const listSessions = useGameStore((state) => state.listSessions)
+  const listUnlockedAchievements = useGameStore((state) => state.listUnlockedAchievements)
   const deleteSession = useGameStore((state) => state.deleteSession)
   const game = games.find((item) => item.id === gameId)
   const playerBriefing = React.useMemo(() => parsePlayerBriefing(game?.files), [game?.files])
@@ -127,6 +129,10 @@ export function PlayPage() {
   const [isLoadOpen, setIsLoadOpen] = React.useState(false)
   const [snapshots, setSnapshots] = React.useState<service.SessionSummary[]>()
   const [loadBusyId, setLoadBusyId] = React.useState<string>()
+  const [isAchievementsOpen, setIsAchievementsOpen] = React.useState(false)
+  const [unlockedAchievements, setUnlockedAchievements] = React.useState<roleplay.AchievementUnlock[]>()
+  const [achievementsBusy, setAchievementsBusy] = React.useState(false)
+  const [achievementsError, setAchievementsError] = React.useState<string>()
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
   const [restartToken, setRestartToken] = React.useState(0)
@@ -322,6 +328,33 @@ export function PlayPage() {
     setSnapshots(undefined)
     setIsLoadOpen(true)
     void refreshSnapshots()
+  }
+
+  async function refreshAchievements() {
+    if (!game) {
+      return
+    }
+    setAchievementsBusy(true)
+    setAchievementsError(undefined)
+    try {
+      const achievements = await listUnlockedAchievements(game.id)
+      setUnlockedAchievements(achievements)
+    }
+    catch (cause) {
+      logRuntimeError(`[play] list achievements failed game=${game.id} error=${cause instanceof Error ? cause.message : String(cause)}`)
+      setUnlockedAchievements([])
+      setAchievementsError(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setAchievementsBusy(false)
+    }
+  }
+
+  function openAchievementsDialog() {
+    setUnlockedAchievements(undefined)
+    setAchievementsError(undefined)
+    setIsAchievementsOpen(true)
+    void refreshAchievements()
   }
 
   async function handleLoadSnapshot(snapshotId: string) {
@@ -589,6 +622,17 @@ export function PlayPage() {
               variant="outline"
               size="icon-lg"
               className="bg-background/55 backdrop-blur-md"
+              aria-label="成就"
+              title="成就"
+              onClick={openAchievementsDialog}
+            >
+              <Trophy data-icon />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              className="bg-background/55 backdrop-blur-md"
               aria-label={bgmButtonLabel}
               aria-pressed={isBgmAudible}
               title={bgmButtonLabel}
@@ -649,6 +693,7 @@ export function PlayPage() {
           {showGameOver && latestResult?.ending ? (
             <GameOverScreen
               endingTitle={latestResult.ending.title}
+              achievementTitle={latestResult.achievement?.new ? latestResult.achievement.title : undefined}
               showTitle={!gameOverImage}
               onReplay={handleReplay}
             />
@@ -839,6 +884,46 @@ export function PlayPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <Dialog open={isAchievementsOpen} onOpenChange={setIsAchievementsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>成就</DialogTitle>
+            <DialogDescription>当前剧情包的已解锁记录。</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-y-auto">
+            {unlockedAchievements === undefined || achievementsBusy ? (
+              <div className="flex items-center gap-2 py-6 text-muted-foreground">
+                <Loader2 className="animate-spin size-4" />
+                <span>加载成就...</span>
+              </div>
+            ) : achievementsError ? (
+              <div className="flex flex-col gap-2 py-6">
+                <p className="text-sm font-medium text-destructive">成就加载失败</p>
+                <p className="break-words text-sm leading-6 text-muted-foreground">{achievementsError}</p>
+              </div>
+            ) : unlockedAchievements.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">还没有解锁成就。</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {unlockedAchievements.map((achievement) => (
+                  <div key={`${achievement.gameId}-${achievement.achievementId}`} className="flex items-start gap-3 rounded-md border bg-card/60 p-3">
+                    <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-amber-300/30 bg-amber-300/10 text-amber-200">
+                      <Trophy className="size-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-sm font-medium">{achievement.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatSaveTime(achievement.unlockedAt)}
+                        {achievement.endingId ? ` · ${achievement.endingId}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <PlaySettingsModal open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </div>
   )
@@ -854,11 +939,12 @@ function formatSaveTime(value: string) {
 
 type GameOverScreenProps = {
   endingTitle: string
+  achievementTitle?: string
   showTitle: boolean
   onReplay: () => void
 }
 
-function GameOverScreen({ endingTitle, showTitle, onReplay }: GameOverScreenProps) {
+function GameOverScreen({ endingTitle, achievementTitle, showTitle, onReplay }: GameOverScreenProps) {
   return (
     <section
       aria-label="游戏结束"
@@ -878,6 +964,12 @@ function GameOverScreen({ endingTitle, showTitle, onReplay }: GameOverScreenProp
           <p className="text-xs text-white/58">结局名称</p>
           <p className="mt-1 break-words text-lg font-medium leading-7 text-white md:text-xl">{endingTitle}</p>
         </div>
+        {achievementTitle ? (
+          <div className="w-full rounded border border-amber-300/35 bg-amber-300/12 px-3 py-2">
+            <p className="text-xs text-amber-100/72">新成就解锁</p>
+            <p className="mt-0.5 break-words text-base font-medium leading-6 text-amber-50">{achievementTitle}</p>
+          </div>
+        ) : null}
         <Button
           type="button"
           variant="outline"

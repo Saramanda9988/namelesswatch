@@ -16,16 +16,17 @@ import (
 )
 
 type GameService struct {
-	ctx         context.Context
-	mu          sync.Mutex
-	config      appconf.AppConfig
-	packs       map[string]roleplay.StoryPack
-	sessions    map[string]*roleplay.GameSession
-	games       map[string]roleplay.LibraryGame
-	gameIDs     []string
-	repo        *gameRepository
-	sessionRepo *sessionRepository
-	prefetch    *prefetchManager
+	ctx             context.Context
+	mu              sync.Mutex
+	config          appconf.AppConfig
+	packs           map[string]roleplay.StoryPack
+	sessions        map[string]*roleplay.GameSession
+	games           map[string]roleplay.LibraryGame
+	gameIDs         []string
+	repo            *gameRepository
+	sessionRepo     *sessionRepository
+	achievementRepo *achievementRepository
+	prefetch        *prefetchManager
 
 	newChatClient chatClientFactory
 }
@@ -111,11 +112,16 @@ func (s *GameService) LoadLibrary() error {
 	if err != nil {
 		return err
 	}
+	achievementRepo, err := newAchievementRepository()
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.repo = repo
 	s.sessionRepo = sessionRepo
+	s.achievementRepo = achievementRepo
 	s.games = nextGames
 	s.packs = nextPacks
 	s.gameIDs = nextGameIDs
@@ -286,6 +292,11 @@ func (s *GameService) DeleteGame(gameID string) error {
 			}
 		}
 	}
+	if s.achievementRepo != nil {
+		if err := s.achievementRepo.deleteByGame(gameID); err != nil {
+			s.logErrorf("delete_game delete_achievements_failed game=%s error=%v", gameID, err)
+		}
+	}
 
 	return s.persistLocked()
 }
@@ -333,6 +344,7 @@ func cloneLibraryGame(game roleplay.LibraryGame) roleplay.LibraryGame {
 	game.MapURLs = append([]string{}, game.MapURLs...)
 	game.Scenes = append([]roleplay.SceneAsset{}, game.Scenes...)
 	game.BGMs = append([]roleplay.BGMAsset{}, game.BGMs...)
+	game.Achievements = append([]roleplay.AchievementDefinition{}, game.Achievements...)
 	return game
 }
 
@@ -365,6 +377,7 @@ func normalizeLibraryGame(game roleplay.LibraryGame) (roleplay.LibraryGame, role
 	game.Files = pack.Files
 	game.Scenes = append([]roleplay.SceneAsset{}, pack.Scenes...)
 	game.BGMs = append([]roleplay.BGMAsset{}, pack.BGMs...)
+	game.Achievements = append([]roleplay.AchievementDefinition{}, pack.Achievements...)
 	if len(pack.Scenes) > 0 {
 		game.PhotoURLs = game.PhotoURLs[:0]
 		for _, scene := range pack.Scenes {
@@ -573,7 +586,9 @@ func (s *GameService) promotePrefetchedChoice(sessionID string, baseTurnID strin
 	}
 	result, err := promotePrefetchBranch(session, outcome)
 	sessionRepo := s.sessionRepo
+	achievementRepo := s.achievementRepo
 	pack := s.packs[session.GameID]
+	result = applyRuleBasedAchievements(session, pack, result)
 	nextConfig := s.config
 	sessionClone := session.Clone()
 	s.mu.Unlock()
@@ -586,6 +601,7 @@ func (s *GameService) promotePrefetchedChoice(sessionID string, baseTurnID strin
 	if s.prefetch != nil {
 		s.prefetch.cancelBaseExceptChoice(sessionID, baseTurnID, choiceID)
 	}
+	result = s.recordAchievementUnlock(achievementRepo, result)
 	if sessionRepo != nil {
 		if saveErr := sessionRepo.save(&sessionClone); saveErr != nil {
 			s.logErrorf("choice_prefetch autosave_failed session=%s choice=%s error=%v", sessionID, choiceID, saveErr)
@@ -632,6 +648,95 @@ func (s *GameService) maybeStartChoicePrefetch(session roleplay.GameSession, pac
 		return
 	}
 	s.prefetch.startChoices(s.requestContext(), cfg, config, s.newChatClient, pack, session.Clone(), result.Turn, tool.Options, s.logInfof)
+}
+
+func applyRuleBasedAchievements(session *roleplay.GameSession, pack roleplay.StoryPack, result roleplay.GameTurnResult) roleplay.GameTurnResult {
+	if session == nil || result.State != roleplay.SessionStateEnded || result.Ending == nil || result.Achievement != nil {
+		return result
+	}
+	for _, achievement := range pack.Achievements {
+		if achievement.Type != roleplay.AchievementTypeRuleBased || achievement.Rule == nil {
+			continue
+		}
+		if !matchesRuleBasedAchievement(session, result.Ending, achievement) {
+			continue
+		}
+		reference := &roleplay.AchievementReference{ID: achievement.ID, Title: achievement.Title}
+		result.Achievement = roleplay.AchievementResultFromReference(session.GameID, session.ID, result.Ending, reference)
+		result.Turn.Achievement = reference
+		setLatestAITurnAchievement(session, result.Turn.ID, reference)
+		return result
+	}
+	return result
+}
+
+func matchesRuleBasedAchievement(session *roleplay.GameSession, ending *roleplay.Ending, achievement roleplay.AchievementDefinition) bool {
+	if session == nil || ending == nil || achievement.Rule == nil {
+		return false
+	}
+	switch achievement.Rule.Kind {
+	case roleplay.AchievementRuleOneLife:
+		if achievement.Rule.ForbidSnapshotFork && strings.TrimSpace(session.ParentID) != "" {
+			return false
+		}
+		if achievement.Rule.EndingID != "" && ending.ID != achievement.Rule.EndingID {
+			return false
+		}
+		if achievement.Rule.EndingKind != "" && ending.Kind != achievement.Rule.EndingKind {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func setLatestAITurnAchievement(session *roleplay.GameSession, turnID string, achievement *roleplay.AchievementReference) {
+	if session == nil || achievement == nil {
+		return
+	}
+	for i := len(session.Turns) - 1; i >= 0; i-- {
+		if session.Turns[i].Role != roleplay.TurnRoleAI {
+			continue
+		}
+		if turnID == "" || session.Turns[i].ID == turnID {
+			session.Turns[i].Achievement = achievement
+			return
+		}
+	}
+}
+
+func (s *GameService) recordAchievementUnlock(repo *achievementRepository, result roleplay.GameTurnResult) roleplay.GameTurnResult {
+	if result.Achievement == nil {
+		return result
+	}
+	endingID := result.Achievement.EndingID
+	if endingID == "" && result.Ending != nil {
+		endingID = result.Ending.ID
+	}
+	unlock := roleplay.AchievementUnlock{
+		GameID:        result.GameID,
+		AchievementID: result.Achievement.AchievementID,
+		Title:         result.Achievement.Title,
+		SessionID:     result.SessionID,
+		EndingID:      endingID,
+		UnlockedAt:    roleplay.NowISO(),
+	}
+	if repo == nil {
+		achievement := roleplay.AchievementResultFromUnlock(unlock, false)
+		result.Achievement = &achievement
+		return result
+	}
+	saved, newlyUnlocked, err := repo.upsert(unlock)
+	if err != nil {
+		s.logErrorf("achievement_unlock persist_failed game=%s session=%s achievement=%s error=%v", result.GameID, result.SessionID, result.Achievement.AchievementID, err)
+		achievement := roleplay.AchievementResultFromUnlock(unlock, false)
+		result.Achievement = &achievement
+		return result
+	}
+	achievement := roleplay.AchievementResultFromUnlock(saved, newlyUnlocked)
+	result.Achievement = &achievement
+	return result
 }
 
 func choiceToolFromTurn(turn roleplay.GameTurn) (roleplay.ChoiceTool, bool) {
@@ -775,6 +880,16 @@ func (s *GameService) DeleteSession(sessionID string) error {
 	return sessionRepo.delete(sessionID)
 }
 
+func (s *GameService) ListUnlockedAchievements(gameID string) ([]roleplay.AchievementUnlock, error) {
+	s.mu.Lock()
+	achievementRepo := s.achievementRepo
+	s.mu.Unlock()
+	if achievementRepo == nil {
+		return []roleplay.AchievementUnlock{}, nil
+	}
+	return achievementRepo.list(gameID)
+}
+
 func summaryFromSession(session *roleplay.GameSession) SessionSummary {
 	preview := ""
 	for i := len(session.Turns) - 1; i >= 0; i-- {
@@ -828,18 +943,23 @@ func (s *GameService) advanceSession(sessionID string) (roleplay.GameTurnResult,
 		roleplay.AITurnOptions{ContextBudget: roleplay.ContextBudgetFromConfig(config)},
 		s.logInfof,
 	)
+	if err == nil {
+		result = applyRuleBasedAchievements(session, pack, result)
+	}
 
 	s.mu.Lock()
 	if current, ok := s.sessions[sessionID]; ok {
 		*current = *session
 	}
 	sessionRepo := s.sessionRepo
+	achievementRepo := s.achievementRepo
 	sessionClone := session.Clone()
 	s.mu.Unlock()
 
 	if err != nil {
 		s.logErrorf("advance_session failed game=%s session=%s error=%v", session.GameID, session.ID, err)
 	} else {
+		result = s.recordAchievementUnlock(achievementRepo, result)
 		s.logInfof("advance_session done game=%s session=%s state=%s payload_lines=%d tools=%d ending=%t", session.GameID, session.ID, result.State, len(result.Payload), len(result.Tools), result.Ending != nil)
 		if sessionRepo != nil {
 			if saveErr := sessionRepo.save(session); saveErr != nil {

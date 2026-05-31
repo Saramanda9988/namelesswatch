@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { CreateGame, DeleteGame, DeleteSession, GetAppConfig, GetGame, GetGames, ImportGamePack, ListSessions, ResumeSession, SaveSnapshot, SubmitChoice, SubmitCustomChoice, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
+import { CreateGame, DeleteGame, DeleteSession, GetAppConfig, GetGame, GetGames, ImportGamePack, ListSessions, ListUnlockedAchievements, ResumeSession, SaveSnapshot, SubmitChoice, SubmitCustomChoice, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
 import type { appconf, roleplay, service } from '../../wailsjs/go/models'
 
 type GameSettings = {
@@ -29,6 +29,7 @@ type GameState = {
   setActiveGame: (gameId: string) => void
   setPendingResumeSession: (sessionId?: string) => void
   listSessions: (gameId: string) => Promise<service.SessionSummary[]>
+  listUnlockedAchievements: (gameId: string) => Promise<roleplay.AchievementUnlock[]>
   resumeSession: (sessionId: string) => Promise<roleplay.GameTurnResult>
   submitChoice: (sessionId: string, choiceId: string) => Promise<roleplay.GameTurnResult>
   submitCustomChoice: (sessionId: string, reply: string) => Promise<roleplay.GameTurnResult>
@@ -90,6 +91,7 @@ export const useGameStore = create<GameState>((set) => ({
   setActiveGame: (gameId) => set({ activeGameId: gameId }),
   setPendingResumeSession: (sessionId) => set({ pendingResumeSessionId: sessionId }),
   listSessions: (gameId) => ListSessions(gameId),
+  listUnlockedAchievements: (gameId) => ListUnlockedAchievements(gameId),
   resumeSession: (sessionId) => ResumeSession(sessionId),
   submitChoice: (sessionId, choiceId) => SubmitChoice(sessionId, choiceId),
   submitCustomChoice: (sessionId, reply) => SubmitCustomChoice(sessionId, reply),

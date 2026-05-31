@@ -22,6 +22,8 @@ export function ImportGamePack(arg1:Record<string, string>):Promise<roleplay.Imp
 
 export function ListSessions(arg1:string):Promise<Array<service.SessionSummary>>;
 
+export function ListUnlockedAchievements(arg1:string):Promise<Array<roleplay.AchievementUnlock>>;
+
 export function RegisterGamePack(arg1:string,arg2:Record<string, string>):Promise<void>;
 
 export function ResumeSession(arg1:string):Promise<roleplay.GameTurnResult>;

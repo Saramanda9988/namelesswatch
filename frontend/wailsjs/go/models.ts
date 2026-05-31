@@ -41,6 +41,143 @@ export namespace appconf {
 
 export namespace roleplay {
 	
+	export class AchievementRule {
+	    kind: string;
+	    endingId?: string;
+	    endingKind?: string;
+	    forbidSnapshotFork?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AchievementRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.endingId = source["endingId"];
+	        this.endingKind = source["endingKind"];
+	        this.forbidSnapshotFork = source["forbidSnapshotFork"];
+	    }
+	}
+	export class Ending {
+	    id: string;
+	    title: string;
+	    kind: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Ending(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.kind = source["kind"];
+	    }
+	}
+	export class AchievementDefinition {
+	    id: string;
+	    title: string;
+	    type?: string;
+	    trigger?: string;
+	    requiresCustomInput?: boolean;
+	    ending: Ending;
+	    rule?: AchievementRule;
+	
+	    static createFrom(source: any = {}) {
+	        return new AchievementDefinition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.type = source["type"];
+	        this.trigger = source["trigger"];
+	        this.requiresCustomInput = source["requiresCustomInput"];
+	        this.ending = this.convertValues(source["ending"], Ending);
+	        this.rule = this.convertValues(source["rule"], AchievementRule);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AchievementReference {
+	    id: string;
+	    title: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AchievementReference(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	    }
+	}
+	
+	export class AchievementUnlock {
+	    gameId: string;
+	    achievementId: string;
+	    title: string;
+	    sessionId: string;
+	    endingId?: string;
+	    unlockedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AchievementUnlock(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gameId = source["gameId"];
+	        this.achievementId = source["achievementId"];
+	        this.title = source["title"];
+	        this.sessionId = source["sessionId"];
+	        this.endingId = source["endingId"];
+	        this.unlockedAt = source["unlockedAt"];
+	    }
+	}
+	export class AchievementUnlockResult {
+	    gameId: string;
+	    achievementId: string;
+	    title: string;
+	    sessionId: string;
+	    endingId?: string;
+	    unlockedAt?: string;
+	    new: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AchievementUnlockResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gameId = source["gameId"];
+	        this.achievementId = source["achievementId"];
+	        this.title = source["title"];
+	        this.sessionId = source["sessionId"];
+	        this.endingId = source["endingId"];
+	        this.unlockedAt = source["unlockedAt"];
+	        this.new = source["new"];
+	    }
+	}
 	export class BGMAsset {
 	    id: string;
 	    name?: string;
@@ -125,22 +262,7 @@ export namespace roleplay {
 		    return a;
 		}
 	}
-	export class Ending {
-	    id: string;
-	    title: string;
-	    kind: string;
 	
-	    static createFrom(source: any = {}) {
-	        return new Ending(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.title = source["title"];
-	        this.kind = source["kind"];
-	    }
-	}
 	export class SceneChange {
 	    id: string;
 	    reason?: string;
@@ -166,6 +288,7 @@ export namespace roleplay {
 	    scene?: SceneChange;
 	    bgm?: BGMChange;
 	    ending?: Ending;
+	    achievement?: AchievementReference;
 	    createdAt: string;
 	
 	    static createFrom(source: any = {}) {
@@ -184,6 +307,7 @@ export namespace roleplay {
 	        this.scene = this.convertValues(source["scene"], SceneChange);
 	        this.bgm = this.convertValues(source["bgm"], BGMChange);
 	        this.ending = this.convertValues(source["ending"], Ending);
+	        this.achievement = this.convertValues(source["achievement"], AchievementReference);
 	        this.createdAt = source["createdAt"];
 	    }
 	
@@ -270,6 +394,7 @@ export namespace roleplay {
 	    bgm?: BGMChange;
 	    currentBgmId?: string;
 	    ending?: Ending;
+	    achievement?: AchievementUnlockResult;
 	    turn: GameTurn;
 	
 	    static createFrom(source: any = {}) {
@@ -287,6 +412,7 @@ export namespace roleplay {
 	        this.bgm = this.convertValues(source["bgm"], BGMChange);
 	        this.currentBgmId = source["currentBgmId"];
 	        this.ending = this.convertValues(source["ending"], Ending);
+	        this.achievement = this.convertValues(source["achievement"], AchievementUnlockResult);
 	        this.turn = this.convertValues(source["turn"], GameTurn);
 	    }
 	
@@ -341,6 +467,7 @@ export namespace roleplay {
 	    mapUrls: string[];
 	    scenes?: SceneAsset[];
 	    bgms?: BGMAsset[];
+	    achievements?: AchievementDefinition[];
 	
 	    static createFrom(source: any = {}) {
 	        return new LibraryGame(source);
@@ -356,6 +483,7 @@ export namespace roleplay {
 	        this.mapUrls = source["mapUrls"];
 	        this.scenes = this.convertValues(source["scenes"], SceneAsset);
 	        this.bgms = this.convertValues(source["bgms"], BGMAsset);
+	        this.achievements = this.convertValues(source["achievements"], AchievementDefinition);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

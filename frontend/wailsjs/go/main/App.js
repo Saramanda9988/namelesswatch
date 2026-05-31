@@ -38,6 +38,10 @@ export function ListSessions(arg1) {
   return window['go']['main']['App']['ListSessions'](arg1);
 }
 
+export function ListUnlockedAchievements(arg1) {
+  return window['go']['main']['App']['ListUnlockedAchievements'](arg1);
+}
+
 export function RegisterGamePack(arg1, arg2) {
   return window['go']['main']['App']['RegisterGamePack'](arg1, arg2);
 }

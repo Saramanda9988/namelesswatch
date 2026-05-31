@@ -53,6 +53,60 @@ func loadExamplePack(t *testing.T) StoryPack {
 	return pack
 }
 
+func loadExamplePackWithAchievements(t *testing.T, achievements string) StoryPack {
+	t.Helper()
+
+	base := loadExamplePack(t)
+	files := make(map[string]string, len(base.Files)+1)
+	for name, content := range base.Files {
+		files[name] = content
+	}
+	files[AchievementsFileName] = achievements
+
+	pack, err := NewStoryPack(base.ID, files)
+	if err != nil {
+		t.Fatalf("new story pack with achievements: %v", err)
+	}
+	return pack
+}
+
+func achievementTestSession(t *testing.T, pack StoryPack, customInput bool) *GameSession {
+	t.Helper()
+
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.AppendTurn(GameTurn{
+		ID:        NewID("turn"),
+		Role:      TurnRoleAI,
+		Payload:   []string{"你站在玄关。"},
+		Tools:     []ChoiceTool{{Type: "choice", ID: "main", Options: []ChoiceOption{{ID: "watch", Label: "查看手表"}}}},
+		CreatedAt: NowISO(),
+	})
+	session.AppendTurn(GameTurn{
+		ID:                  NewID("turn"),
+		Role:                TurnRoleUser,
+		Payload:             []string{"把手表扔出窗外"},
+		SelectedChoiceID:    "custom-watch",
+		SelectedChoiceLabel: "把手表扔出窗外",
+		CustomInput:         customInput,
+		CreatedAt:           NowISO(),
+	})
+	return session
+}
+
+const watchRevengeAchievementJSON = `[
+  {
+    "id": "watch_revenge",
+    "title": "手表的复仇",
+    "type": "ai_triggered",
+    "trigger": "玩家明确把手表丢弃或扔掉。",
+    "requiresCustomInput": true,
+    "ending": {"id":"watch_revenge","title":"手表的复仇","kind":"bad"}
+  }
+]`
+
 func TestNewStoryPackRequiresStandardFiles(t *testing.T) {
 	pack := loadExamplePack(t)
 	if pack.Files["scene.md"] == "" || pack.Files["true.md"] == "" {
@@ -89,6 +143,85 @@ func TestNewLibraryGameRequiresMetadataTitle(t *testing.T) {
 	}
 	if !slices.Contains(report.Missing, "metadata.json") {
 		t.Fatalf("expected missing metadata.json, got %#v", report.Missing)
+	}
+}
+
+func TestNewLibraryGameParsesAchievements(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json": `{"title":"带隐藏成就的规则怪谈"}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+	files[AchievementsFileName] = watchRevengeAchievementJSON
+
+	game, report, err := NewLibraryGame(files)
+	if err != nil {
+		t.Fatalf("new library game: %v", err)
+	}
+	if report.Game == nil {
+		t.Fatalf("expected imported game, got report=%#v", report)
+	}
+	if len(game.Achievements) != 1 || game.Achievements[0].ID != "watch_revenge" {
+		t.Fatalf("expected parsed achievement, got %#v", game.Achievements)
+	}
+	if !slices.Contains(report.ValidFiles, AchievementsFileName) {
+		t.Fatalf("expected achievements.json in valid files, got %#v", report.ValidFiles)
+	}
+
+	storyPack, err := NewStoryPack(game.ID, game.Files)
+	if err != nil {
+		t.Fatalf("new story pack: %v", err)
+	}
+	if len(storyPack.Achievements) != 1 || storyPack.Achievements[0].Title != "手表的复仇" {
+		t.Fatalf("expected story pack achievements, got %#v", storyPack.Achievements)
+	}
+}
+
+func TestExampleAchievementsFileIsValid(t *testing.T) {
+	files := make(map[string]string)
+	for _, fileName := range RequiredStoryFiles {
+		content, err := os.ReadFile(filepath.Join("..", "..", "docs", "example", fileName))
+		if err != nil {
+			t.Fatalf("read example %s: %v", fileName, err)
+		}
+		files[fileName] = string(content)
+	}
+	content, err := os.ReadFile(filepath.Join("..", "..", "docs", "example", AchievementsFileName))
+	if err != nil {
+		t.Fatalf("read example achievements: %v", err)
+	}
+	files[AchievementsFileName] = string(content)
+
+	pack, err := NewStoryPack("example", files)
+	if err != nil {
+		t.Fatalf("new story pack with example achievements: %v", err)
+	}
+	if len(pack.Achievements) != 5 {
+		t.Fatalf("expected 5 example achievements, got %#v", pack.Achievements)
+	}
+}
+
+func TestNewLibraryGameRejectsInvalidAchievements(t *testing.T) {
+	pack := loadExamplePack(t)
+	files := map[string]string{
+		"metadata.json": `{"title":"坏成就定义"}`,
+	}
+	for name, content := range pack.Files {
+		files[name] = content
+	}
+	files[AchievementsFileName] = `[{"id":"broken","title":"坏定义","type":"ai_triggered","ending":{"id":"broken","title":"坏定义","kind":"bad"}}]`
+
+	_, report, err := NewLibraryGame(files)
+	if err == nil || !strings.Contains(err.Error(), "trigger is required") {
+		t.Fatalf("expected invalid achievement error, got %v", err)
+	}
+	if !slices.Contains(report.Warnings, "achievements.json 解析失败") {
+		t.Fatalf("expected achievement warning, got %#v", report.Warnings)
+	}
+	if !slices.Contains(report.ValidFiles, AchievementsFileName) {
+		t.Fatalf("expected achievements.json in valid files, got %#v", report.ValidFiles)
 	}
 }
 
@@ -545,6 +678,26 @@ func TestBuildMessagesRequiresFreshRuleReviewAfterChoice(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesIncludesHiddenAchievements(t *testing.T) {
+	pack := loadExamplePackWithAchievements(t, watchRevengeAchievementJSON)
+	session, err := NewGameSession("example", pack)
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	messages := BuildMessages(pack, session, nil, "")
+	systemPrompt := messages[0].Content
+	userPrompt := messages[1].Content
+	if !strings.Contains(userPrompt, "--- hidden achievements.json ---") ||
+		!strings.Contains(userPrompt, "watch_revenge") ||
+		!strings.Contains(userPrompt, "玩家明确把手表丢弃或扔掉") {
+		t.Fatalf("expected hidden achievement context, got:\n%s", userPrompt)
+	}
+	if !strings.Contains(systemPrompt, "隐藏成就条件") || !strings.Contains(systemPrompt, "achievement title") {
+		t.Fatalf("expected system prompt to protect achievement metadata, got:\n%s", systemPrompt)
+	}
+}
+
 func TestBuildMessagesMarksCustomInput(t *testing.T) {
 	pack := loadExamplePack(t)
 	session, err := NewGameSession("example", pack)
@@ -626,6 +779,69 @@ func TestValidateGameTurnForSessionRequiresKnownEndingTitle(t *testing.T) {
 	response.Ending = &Ending{ID: "good-1", Title: "好结局1", Kind: "loop"}
 	if err := ValidateGameTurnForSession(response, nil, pack); err == nil || !strings.Contains(err.Error(), "must be \"good\"") {
 		t.Fatalf("expected ending kind mismatch to be rejected, got %v", err)
+	}
+}
+
+func TestValidateAchievementResponse(t *testing.T) {
+	pack := loadExamplePackWithAchievements(t, watchRevengeAchievementJSON)
+	session := achievementTestSession(t, pack, true)
+	valid := AITurnResponse{
+		Type:        "game_turn",
+		State:       "ended",
+		Payload:     []string{"你丢掉的手表从黑暗里回来了。"},
+		Tools:       []ChoiceTool{},
+		Ending:      &Ending{ID: "watch_revenge", Title: "手表的复仇", Kind: "bad"},
+		Achievement: &AchievementReference{ID: "watch_revenge", Title: "手表的复仇"},
+	}
+	if err := ValidateGameTurnForSession(valid, session, pack); err != nil {
+		t.Fatalf("valid achievement ending rejected: %v", err)
+	}
+
+	continueWithAchievement := valid
+	continueWithAchievement.State = "continue"
+	continueWithAchievement.Ending = nil
+	continueWithAchievement.Tools = []ChoiceTool{{Type: "choice", ID: "main", Options: []ChoiceOption{{ID: "wait", Label: "站在原地"}}}}
+	if err := ValidateGameTurnForSession(continueWithAchievement, session, pack); err == nil || !strings.Contains(err.Error(), "achievement requires ended state") {
+		t.Fatalf("expected continue achievement rejection, got %v", err)
+	}
+
+	undeclared := valid
+	undeclared.Achievement = &AchievementReference{ID: "unknown", Title: "未知成就"}
+	if err := ValidateGameTurnForSession(undeclared, session, pack); err == nil || !strings.Contains(err.Error(), "not declared") {
+		t.Fatalf("expected undeclared achievement rejection, got %v", err)
+	}
+
+	titleMismatch := valid
+	titleMismatch.Achievement = &AchievementReference{ID: "watch_revenge", Title: "模型编造标题"}
+	if err := ValidateGameTurnForSession(titleMismatch, session, pack); err == nil || !strings.Contains(err.Error(), "title mismatch") {
+		t.Fatalf("expected achievement title mismatch, got %v", err)
+	}
+
+	fixedChoiceSession := achievementTestSession(t, pack, false)
+	if err := ValidateGameTurnForSession(valid, fixedChoiceSession, pack); err == nil || !strings.Contains(err.Error(), "requires custom input") {
+		t.Fatalf("expected requires custom input rejection, got %v", err)
+	}
+}
+
+func TestRunAITurnRepairsInvalidAchievementOutput(t *testing.T) {
+	pack := loadExamplePackWithAchievements(t, watchRevengeAchievementJSON)
+	session := achievementTestSession(t, pack, true)
+	client := &fakeChatClient{
+		responses: []string{
+			`{"type":"game_turn","state":"continue","payload":["你还站在原地。"],"tools":[{"type":"choice","id":"main","options":[{"id":"wait","label":"继续等待"}]}],"achievement":{"id":"watch_revenge","title":"手表的复仇"}}`,
+			`{"type":"game_turn","state":"continue","payload":["手表落在楼下，黑暗却暂时没有追上来。"],"tools":[{"type":"choice","id":"main","options":[{"id":"look","label":"探头查看楼下"},{"id":"leave","label":"离开窗边"}]}]}`,
+		},
+	}
+
+	result, err := RunAITurn(context.Background(), client, pack, session)
+	if err != nil {
+		t.Fatalf("run ai turn: %v", err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("expected repair retry call, got %d calls", client.calls)
+	}
+	if result.Achievement != nil || result.State == SessionStateEnded {
+		t.Fatalf("expected repaired non-achievement continuation, got %#v", result)
 	}
 }
 

@@ -110,3 +110,7 @@ func (a *App) SaveSnapshot(sessionID string, label string) (service.SessionSumma
 func (a *App) DeleteSession(sessionID string) error {
 	return a.gameService.DeleteSession(sessionID)
 }
+
+func (a *App) ListUnlockedAchievements(gameID string) ([]roleplay.AchievementUnlock, error) {
+	return a.gameService.ListUnlockedAchievements(gameID)
+}
