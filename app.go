@@ -2,16 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"namelesswatch/internal/appconf"
 	"namelesswatch/internal/roleplay"
 	"namelesswatch/internal/service"
+	storypack "namelesswatch/internal/storypack"
+	"os"
+	"path/filepath"
+	"strings"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
+	ctx           context.Context
 	config        *appconf.AppConfig
 	configService *service.ConfigService
 	gameService   *service.GameService
+}
+
+type StoryTemplateResult struct {
+	Root    string   `json:"root"`
+	Written []string `json:"written"`
 }
 
 func NewApp() *App {
@@ -34,6 +47,7 @@ func NewApp() *App {
 }
 
 func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
 	a.configService.Init(ctx)
 	a.gameService.Init(ctx)
 }
@@ -57,6 +71,49 @@ func (a *App) RegisterGamePack(gameID string, files map[string]string) error {
 
 func (a *App) ImportGamePack(files map[string]string) (roleplay.ImportGameResult, error) {
 	return a.gameService.ImportGamePack(files)
+}
+
+func (a *App) SelectStoryTemplateDirectory() (string, error) {
+	if a.ctx == nil {
+		return "", errors.New("app is not ready")
+	}
+	return wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title:                "选择模板生成位置",
+		CanCreateDirectories: true,
+	})
+}
+
+func (a *App) CreateStoryTemplate(parentPath string, folderName string, title string, initialScene string, force bool) (StoryTemplateResult, error) {
+	parentPath = strings.TrimSpace(parentPath)
+	if parentPath == "" {
+		return StoryTemplateResult{}, errors.New("target path is required")
+	}
+	parentInfo, err := os.Stat(parentPath)
+	if err != nil {
+		return StoryTemplateResult{}, err
+	}
+	if !parentInfo.IsDir() {
+		return StoryTemplateResult{}, errors.New("target path is not a directory")
+	}
+
+	targetPath := filepath.Join(parentPath, storypack.SafeFolderName(folderName))
+	written, err := storypack.ScaffoldPack(targetPath, storypack.ScaffoldOptions{
+		Title:        title,
+		InitialScene: initialScene,
+		Force:        force,
+	})
+	if err != nil {
+		return StoryTemplateResult{}, err
+	}
+
+	absRoot, err := filepath.Abs(targetPath)
+	if err != nil {
+		return StoryTemplateResult{}, err
+	}
+	return StoryTemplateResult{
+		Root:    absRoot,
+		Written: written,
+	}, nil
 }
 
 func (a *App) GetGames() ([]roleplay.LibraryGame, error) {

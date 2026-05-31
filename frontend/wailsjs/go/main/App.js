@@ -6,6 +6,10 @@ export function CreateGame(arg1) {
   return window['go']['main']['App']['CreateGame'](arg1);
 }
 
+export function CreateStoryTemplate(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['CreateStoryTemplate'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function DeleteGame(arg1) {
   return window['go']['main']['App']['DeleteGame'](arg1);
 }
@@ -52,6 +56,10 @@ export function ResumeSession(arg1) {
 
 export function SaveSnapshot(arg1, arg2) {
   return window['go']['main']['App']['SaveSnapshot'](arg1, arg2);
+}
+
+export function SelectStoryTemplateDirectory() {
+  return window['go']['main']['App']['SelectStoryTemplateDirectory']();
 }
 
 export function StartGame(arg1) {

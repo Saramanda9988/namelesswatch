@@ -1,8 +1,9 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { FolderPlus, Gamepad2, History, Play, Search, Settings, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderPlus, Gamepad2, History, Play, Search, Settings, Trash2 } from 'lucide-react'
 import * as React from 'react'
 
 import { SettingsDialog } from '@/components/settings-dialog'
+import { StoryTemplateDialog } from '@/components/story-template-dialog'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/game-store'
-import type { roleplay } from '../../wailsjs/go/models'
+import type { main, roleplay } from '../../wailsjs/go/models'
 import { LogInfo } from '../../wailsjs/runtime/runtime'
 
 const directoryInputProps = {
@@ -46,6 +47,7 @@ export function HomePage() {
   const [search, setSearch] = React.useState('')
   const [continueByGame, setContinueByGame] = React.useState<Record<string, string>>({})
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
+  const [isTemplateOpen, setIsTemplateOpen] = React.useState(false)
 
   React.useEffect(() => {
     void fetchGames()
@@ -161,6 +163,11 @@ export function HomePage() {
     }
   }
 
+  function handleTemplateCreated(result: main.StoryTemplateResult) {
+    const folderName = templatePathName(result.root)
+    setStatus(`已创建模板：${folderName}（${result.written.length} 个文件）`)
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Input ref={inputRef} type="file" className="hidden" multiple onChange={handleImport} {...directoryInputProps} />
@@ -188,6 +195,16 @@ export function HomePage() {
                 className="bg-muted/45 pl-9"
               />
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              aria-label="新建模板"
+              title="新建模板"
+              onClick={() => setIsTemplateOpen(true)}
+            >
+              <FilePlus2 data-icon="inline-start" />
+              <span className="hidden sm:inline">新建模板</span>
+            </Button>
             <Button
               type="button"
               disabled={isImporting}
@@ -252,6 +269,10 @@ export function HomePage() {
                 <Button type="button" onClick={() => inputRef.current?.click()}>
                   <FolderPlus data-icon="inline-start" />
                   添加游戏
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setIsTemplateOpen(true)}>
+                  <FilePlus2 data-icon="inline-start" />
+                  新建模板
                 </Button>
               </CardContent>
             </Card>
@@ -342,6 +363,11 @@ export function HomePage() {
       </main>
 
       <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      <StoryTemplateDialog
+        open={isTemplateOpen}
+        onOpenChange={setIsTemplateOpen}
+        onCreated={handleTemplateCreated}
+      />
     </div>
   )
 }
@@ -415,6 +441,11 @@ function summarizeKeys(keys: string[]) {
   const visible = [...sorted.filter((key) => !key.startsWith('photo/')).slice(0, 8), ...photoKeys.slice(0, 8)]
   const suffix = sorted.length > visible.length ? ` ...(+${sorted.length - visible.length})` : ''
   return `${visible.join(',')}${suffix}`
+}
+
+function templatePathName(value: string) {
+  const parts = value.split(/[\\/]/).filter(Boolean)
+  return parts.at(-1) ?? value
 }
 
 async function readFileContent(file: File) {

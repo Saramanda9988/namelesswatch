@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-import { CreateGame, DeleteGame, DeleteSession, GetAppConfig, GetGame, GetGames, ImportGamePack, ListSessions, ListUnlockedAchievements, ResumeSession, SaveSnapshot, SubmitChoice, SubmitCustomChoice, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
-import type { appconf, roleplay, service } from '../../wailsjs/go/models'
+import { CreateGame, CreateStoryTemplate, DeleteGame, DeleteSession, GetAppConfig, GetGame, GetGames, ImportGamePack, ListSessions, ListUnlockedAchievements, ResumeSession, SaveSnapshot, SelectStoryTemplateDirectory, SubmitChoice, SubmitCustomChoice, UpdateAppConfig, UpdateGame } from '../../wailsjs/go/main/App'
+import type { appconf, main, roleplay, service } from '../../wailsjs/go/models'
 
 type GameSettings = {
   textSpeed: number
@@ -26,6 +26,8 @@ type GameState = {
   updateGame: (gameId: string, game: roleplay.LibraryGame) => Promise<roleplay.LibraryGame>
   deleteGame: (gameId: string) => Promise<void>
   importGameFiles: (files: Record<string, string>) => Promise<roleplay.ImportGameResult>
+  selectStoryTemplateDirectory: () => Promise<string>
+  createStoryTemplate: (parentPath: string, folderName: string, title: string, initialScene: string, force: boolean) => Promise<main.StoryTemplateResult>
   setActiveGame: (gameId: string) => void
   setPendingResumeSession: (sessionId?: string) => void
   listSessions: (gameId: string) => Promise<service.SessionSummary[]>
@@ -88,6 +90,10 @@ export const useGameStore = create<GameState>((set) => ({
     set({ games })
     return result
   },
+  selectStoryTemplateDirectory: () => SelectStoryTemplateDirectory(),
+  createStoryTemplate: (parentPath, folderName, title, initialScene, force) => (
+    CreateStoryTemplate(parentPath, folderName, title, initialScene, force)
+  ),
   setActiveGame: (gameId) => set({ activeGameId: gameId }),
   setPendingResumeSession: (sessionId) => set({ pendingResumeSessionId: sessionId }),
   listSessions: (gameId) => ListSessions(gameId),

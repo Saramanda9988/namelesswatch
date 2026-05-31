@@ -46,7 +46,7 @@ func TestScaffoldPackRefusesExistingFilesWithoutForce(t *testing.T) {
 		t.Fatalf("write existing metadata: %v", err)
 	}
 
-	if _, err := ScaffoldPack(root, ScaffoldOptions{}); err == nil || !strings.Contains(err.Error(), "--force") {
+	if _, err := ScaffoldPack(root, ScaffoldOptions{}); err == nil || !strings.Contains(err.Error(), "overwrite") {
 		t.Fatalf("expected force hint for existing file, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "scene.md")); !os.IsNotExist(err) {

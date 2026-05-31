@@ -39,6 +39,25 @@ export namespace appconf {
 
 }
 
+export namespace main {
+	
+	export class StoryTemplateResult {
+	    root: string;
+	    written: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StoryTemplateResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.root = source["root"];
+	        this.written = source["written"];
+	    }
+	}
+
+}
+
 export namespace roleplay {
 	
 	export class AchievementRule {

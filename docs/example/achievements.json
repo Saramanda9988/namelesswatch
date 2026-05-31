@@ -48,6 +48,28 @@
       }
     },
     {
+      "id": "i_am_not_sleeper",
+      "title": "我不是睡神",
+      "type": "ai_triggered",
+      "trigger": "每次回到家用户就输入要回去睡觉，你可以在memory中记录直接睡觉次数，两次都睡可直接达成好结局",
+      "ending": {
+        "id": "i_am_not_sleeper",
+        "title": "我不是睡神",
+        "kind": "good"
+      }
+    },
+        {
+      "id": "what_are_u_doing",
+      "title": "你在做什么",
+      "type": "ai_triggered",
+      "trigger": "用户给出了一个完全和故事发展不相干的命令，你可以自由嘲讽或指责用户",
+      "ending": {
+        "id": "what_are_u_doing",
+        "title": "你在做什么",
+        "kind": "bad"
+      }
+    },
+    {
       "id": "one_life_clear",
       "title": "殿堂级理解",
       "type": "rule_based",

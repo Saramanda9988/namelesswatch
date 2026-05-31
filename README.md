@@ -14,7 +14,7 @@ here: https://wails.io/docs/reference/project-config
 - 初始化剧情包：`go run ./cli init --title "我的规则怪谈" ./packs/my-story`
 - 校验剧情包：`go run ./cli validate ./packs/my-story`
 
-`init` 会生成 `metadata.json`、`briefing.json`、`scene.md`、`rule.md`、`true.md`、`memory.md`、`endings.md`，以及 `photo/`、`bgm/` 下的素材元数据文件。已有脚手架文件默认不会被覆盖；需要覆盖时加 `--force`。
+`init` 会生成 `metadata.json`、`briefing.json`、`achievements.json`、`scene.md`、`rule.md`、`true.md`、`memory.md`、`endings.md`，以及 `photo/`、`bgm/` 下的素材元数据文件。已有脚手架文件默认不会被覆盖；需要覆盖时加 `--force`。
 
 ## Live Development
 
