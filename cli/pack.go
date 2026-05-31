@@ -24,6 +24,7 @@ var scaffoldDirs = []string{"photo", "bgm"}
 var scaffoldFiles = []scaffoldFile{
 	{Path: "metadata.json", Content: metadataJSON},
 	{Path: "briefing.json", Content: briefingJSON},
+	{Path: "achievements.json", Content: achievementsJSON},
 	{Path: "scene.md", Content: sceneMarkdown},
 	{Path: "rule.md", Content: ruleMarkdown},
 	{Path: "true.md", Content: trueMarkdown},
@@ -36,6 +37,7 @@ var scaffoldFiles = []scaffoldFile{
 var requiredPackFiles = []string{
 	"metadata.json",
 	"briefing.json",
+	"achievements.json",
 	"scene.md",
 	"rule.md",
 	"true.md",
@@ -512,6 +514,41 @@ func briefingJSON(_ ScaffoldOptions) string {
 			{ID: "follow-rules", Text: "不要忽略已经知道的规则"},
 		},
 		ConfirmText: "我已记住",
+	})
+}
+
+func achievementsJSON(_ ScaffoldOptions) string {
+	return mustPrettyJSON(struct {
+		Achievements []roleplay.AchievementDefinition `json:"achievements"`
+	}{
+		Achievements: []roleplay.AchievementDefinition{
+			{
+				ID:      "truth_seeker",
+				Title:   "真相追索者",
+				Type:    roleplay.AchievementTypeAITriggered,
+				Trigger: "玩家通过调查关键线索并主动说出隐藏真相时触发。",
+				Ending: roleplay.Ending{
+					ID:    "truth_revealed",
+					Title: "真相追索者",
+					Kind:  "good",
+				},
+			},
+			{
+				ID:    "one_life_clear",
+				Title: "一次通关",
+				Type:  roleplay.AchievementTypeRuleBased,
+				Ending: roleplay.Ending{
+					ID:    "one_life_clear",
+					Title: "一次通关",
+					Kind:  "good",
+				},
+				Rule: &roleplay.AchievementRule{
+					Kind:               roleplay.AchievementRuleOneLife,
+					EndingKind:         "good",
+					ForbidSnapshotFork: true,
+				},
+			},
+		},
 	})
 }
 
